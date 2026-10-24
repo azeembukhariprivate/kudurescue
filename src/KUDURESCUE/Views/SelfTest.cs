@@ -182,25 +182,32 @@ namespace Kudurescue.Views
 
                 List<FoundFile> found;
                 RecoverResult result;
+                var recoveredAs = new Dictionary<string, string>();
                 var dest = Path.Combine(_temp, "recovered-" + fs);
                 using (var volume = Volumes.Open(VolumeDevice.Open(drive)))
                 {
                     _log.AppendLine($"      {fs} drive {drive}: {volume.FormatName}, {volume.ClusterSize} byte clusters");
                     found = QuickScan.RunToEnd(volume, drive);
-                    var wanted = found.Where(f => expected.ContainsKey(f.RelativePath)).ToList();
+                    // On FAT, a name that fits 8.3 has no long name, and deleting it overwrites its first letter: it comes back as "_".
+                    bool Same(FoundFile f, string relative) =>
+                        f.RelativePath.Equals(relative, StringComparison.OrdinalIgnoreCase) ||
+                        (f.Name.StartsWith("_") && f.Folder.Equals(Path.GetDirectoryName(relative) ?? string.Empty, StringComparison.OrdinalIgnoreCase) &&
+                         f.Name.Substring(1).Equals(Path.GetFileName(relative).Substring(1), StringComparison.OrdinalIgnoreCase));
+                    var wanted = found.Where(f => expected.Keys.Any(k => Same(f, k))).ToList();
                     foreach (var f in wanted) _log.AppendLine($"      {f.RelativePath}: {f.Chance}{(f.Note != null ? " (" + f.Note + ")" : string.Empty)}");
                     foreach (var relative in expected.Keys)
                     {
-                        var f = wanted.FirstOrDefault(x => x.RelativePath.Equals(relative, StringComparison.OrdinalIgnoreCase));
+                        var f = wanted.FirstOrDefault(x => Same(x, relative));
                         Expect(f != null, relative + " found (found: " + string.Join(", ", found.Select(x => x.RelativePath).Take(30)) + ")");
                         Expect(f.Size == expected[relative].Length, $"{relative} size");
                         Expect(f.Chance == Chance.Excellent || f.Chance == Chance.Unsure, $"{relative} still there, got {f.Chance}");
+                        recoveredAs[relative] = f.RelativePath;
                     }
                     result = Recovery.Run(volume, wanted, new RecoverOptions { Destination = dest });
                 }
                 Expect(result.Problems.Count == 0, "no problems: " + string.Join("; ", result.Problems.Select(p => p.File + ": " + p.Reason)));
                 foreach (var pair in expected)
-                    Expect(File.ReadAllBytes(Path.Combine(dest, pair.Key)).SequenceEqual(pair.Value), pair.Key + " identical");
+                    Expect(File.ReadAllBytes(Path.Combine(dest, recoveredAs[pair.Key])).SequenceEqual(pair.Value), pair.Key + " identical");
             }
             finally
             {
