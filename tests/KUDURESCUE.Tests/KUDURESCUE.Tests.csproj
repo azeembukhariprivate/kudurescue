@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Checks KUDURESCUE's recovery engine against synthetic NTFS drive images, plus the Recycle Bin reader and naming rules.
+       Runs on any OS with: dotnet run, project tests/KUDURESCUE.Tests -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CA1416;SYSLIB0021</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\KUDURESCUE\Core\*.cs" Exclude="..\..\src\KUDURESCUE\Core\ThemeManager.cs" LinkBase="Core" />
+  </ItemGroup>
+
+</Project>

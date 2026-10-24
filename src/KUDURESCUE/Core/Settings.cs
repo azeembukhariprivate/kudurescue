@@ -1,0 +1,86 @@
+using System;
+using Microsoft.Win32;
+
+namespace Kudurescue.Core
+{
+    public enum ThemeMode { System, Light, Dark }
+
+    /// <summary>Settings are stored under HKEY_CURRENT_USER, so no administrator rights are needed.</summary>
+    public static class Settings
+    {
+        private const string KeyPath = @"Software\KUDURESCUE";
+
+        private static string Get(string name, string fallback)
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(KeyPath))
+                {
+                    return key?.GetValue(name) as string ?? fallback;
+                }
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
+        private static void Set(string name, string value)
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.CreateSubKey(KeyPath))
+                {
+                    key?.SetValue(name, value ?? string.Empty);
+                }
+            }
+            catch
+            {
+                // Settings are best-effort.
+            }
+        }
+
+        private static bool GetBool(string name, bool fallback) => Get(name, fallback ? "1" : "0") == "1";
+        private static void SetBool(string name, bool value) => Set(name, value ? "1" : "0");
+
+        private static T GetEnum<T>(string name, T fallback) where T : struct =>
+            Enum.TryParse(Get(name, fallback.ToString()), out T v) ? v : fallback;
+
+        public static ThemeMode Theme
+        {
+            get => GetEnum("Theme", ThemeMode.System);
+            set => Set("Theme", value.ToString());
+        }
+
+        public static bool CheckForUpdates
+        {
+            get => GetBool("CheckForUpdates", true);
+            set => SetBool("CheckForUpdates", value);
+        }
+
+        public static string SkippedVersion
+        {
+            get => Get("SkippedVersion", string.Empty);
+            set => Set("SkippedVersion", value);
+        }
+
+        /// <summary>The last folder recovered files were saved to (its parent is suggested next time).</summary>
+        public static string LastDestination
+        {
+            get => Get("LastDestination", string.Empty);
+            set => Set("LastDestination", value);
+        }
+
+        public static bool KeepFolders
+        {
+            get => GetBool("KeepFolders", true);
+            set => SetBool("KeepFolders", value);
+        }
+
+        public static bool RecoverPartial
+        {
+            get => GetBool("RecoverPartial", true);
+            set => SetBool("RecoverPartial", value);
+        }
+    }
+}

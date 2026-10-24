@@ -1,0 +1,447 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using Kudurescue.Core;
+
+namespace Kudurescue.Tests
+{
+    /// <summary>A tiny test runner: each check prints PASS or FAIL, and the exit code is the number of failures.</summary>
+    internal static class Program
+    {
+        private static int _failures;
+        private static int _passes;
+        private static string _temp;
+
+        private static int Main()
+        {
+            _temp = Path.Combine(Path.GetTempPath(), "kudurescue-tests-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_temp);
+            try
+            {
+                Run("Decodes runlists", DecodesRunlists);
+                Run("Reads the boot sector", ReadsBootSector);
+                Run("Applies fixups and spots torn records", Fixups);
+                Run("Decompresses LZNT1", DecompressesLznt1);
+                Run("Finds deleted files with names and folders", FindsDeletedFiles);
+                Run("Works out recovery chances", RecoveryChances);
+                Run("Recovers files byte for byte", RecoversFiles);
+                Run("Recovery options and naming", RecoveryNaming);
+                Run("Reads Recycle Bin entries", ReadsRecycleBin);
+                Run("Groups files by type", GroupsFiles);
+                Run("Counts used clusters", CountsClusters);
+            }
+            finally
+            {
+                try { Directory.Delete(_temp, true); } catch { /* ignore */ }
+            }
+            Console.WriteLine();
+            Console.WriteLine($"{_passes} passed, {_failures} failed");
+            return _failures;
+        }
+
+        private static void Run(string name, Action test)
+        {
+            try
+            {
+                test();
+                _passes++;
+                Console.WriteLine("PASS  " + name);
+            }
+            catch (Exception ex)
+            {
+                _failures++;
+                Console.WriteLine("FAIL  " + name + "\n      " + ex.Message + "\n" + ex.StackTrace?.Split('\n').FirstOrDefault());
+            }
+        }
+
+        private static void Check(bool condition, string what)
+        {
+            if (!condition) throw new Exception(what);
+        }
+
+        private static void Equal<T>(T expected, T actual, string what)
+        {
+            if (!EqualityComparer<T>.Default.Equals(expected, actual))
+                throw new Exception($"{what}: expected <{expected}> but got <{actual}>");
+        }
+
+        // ================================================================== the test drive
+
+        private static readonly byte[] PhotoData = NtfsImage.Pattern(10000, 1);
+        private static readonly byte[] ReportData = NtfsImage.Pattern(12000, 2);
+        private static readonly byte[] SparseHead = NtfsImage.Pattern(4096, 3);
+        private static readonly byte[] SparseTail = NtfsImage.Pattern(4096, 4);
+        private static readonly byte[] ListedData = NtfsImage.Pattern(8000, 5);
+        private static readonly byte[] PartialData = NtfsImage.Pattern(16384, 6);
+        private static byte[] _compressible;
+        private static string _image;
+
+        /// <summary>Builds (once) a drive image with one of every case the engine has to handle.</summary>
+        private static string Image()
+        {
+            if (_image != null) return _image;
+            var img = new NtfsImage();
+            NtfsImage.Record R(long n, bool inUse = false, bool dir = false, int seq = 1) => new NtfsImage.Record { Number = n, InUse = inUse, Directory = dir, Sequence = seq };
+
+            // 24: a folder still in use. 25: a deleted photo in it, all clusters free.
+            var photos = R(24, true, true, 2);
+            photos.Attributes.Add(NtfsImage.StandardInformation(0x10));
+            photos.Attributes.Add(NtfsImage.FileName(5, 5, "Photos"));
+            img.Add(photos);
+            var photo = R(25);
+            photo.Attributes.Add(NtfsImage.StandardInformation());
+            photo.Attributes.Add(NtfsImage.FileName(24, 2, "IMG_0001.JPG"));
+            photo.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (100L, 3L) }, PhotoData.Length));
+            img.Add(photo);
+            img.WriteClusters(100, PhotoData);
+
+            // 26: a small deleted file kept inside its record (resident).
+            var note = R(26);
+            note.Attributes.Add(NtfsImage.StandardInformation());
+            note.Attributes.Add(NtfsImage.FileName(5, 5, "note.txt"));
+            note.Attributes.Add(NtfsImage.Resident(0x80, Encoding.ASCII.GetBytes("hello from inside the index")));
+            img.Add(note);
+
+            // 27: deleted, but its clusters now belong to another file.
+            var over = R(27);
+            over.Attributes.Add(NtfsImage.StandardInformation());
+            over.Attributes.Add(NtfsImage.FileName(5, 5, "overwritten.bin"));
+            over.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (200L, 2L) }, 8192));
+            img.Add(over);
+            img.MarkUsed(200, 2);
+
+            // 28: half of its clusters reused.
+            var partial = R(28);
+            partial.Attributes.Add(NtfsImage.StandardInformation());
+            partial.Attributes.Add(NtfsImage.FileName(5, 5, "partial.doc"));
+            partial.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (300L, 4L) }, PartialData.Length));
+            img.Add(partial);
+            img.WriteClusters(300, PartialData);
+            img.MarkUsed(302, 2);
+
+            // 29: a file still in use must not be listed.
+            var keep = R(29, true);
+            keep.Attributes.Add(NtfsImage.StandardInformation());
+            keep.Attributes.Add(NtfsImage.FileName(5, 5, "keep.txt"));
+            keep.Attributes.Add(NtfsImage.Resident(0x80, Encoding.ASCII.GetBytes("still here")));
+            img.Add(keep);
+
+            // 30: a deleted folder (its sequence number moved on by one when it was freed).
+            // 31: a fragmented file inside it; the second piece lies before the first on the drive.
+            var old = R(30, false, true, 3);
+            old.Attributes.Add(NtfsImage.StandardInformation(0x10));
+            old.Attributes.Add(NtfsImage.FileName(5, 5, "Old"));
+            img.Add(old);
+            var report = R(31);
+            report.Attributes.Add(NtfsImage.StandardInformation());
+            report.Attributes.Add(NtfsImage.FileName(30, 2, "report.pdf"));
+            report.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (400L, 1L), (350L, 2L) }, ReportData.Length));
+            img.Add(report);
+            img.WriteClusters(400, ReportData.Take(4096).ToArray());
+            img.WriteClusters(350, ReportData.Skip(4096).ToArray());
+
+            // 32: its folder's record (40) was reused by an ordinary file, so it goes to "Lost folders".
+            var lost = R(32);
+            lost.Attributes.Add(NtfsImage.StandardInformation());
+            lost.Attributes.Add(NtfsImage.FileName(40, 1, "orphan.txt"));
+            lost.Attributes.Add(NtfsImage.Resident(0x80, Encoding.ASCII.GetBytes("orphan")));
+            img.Add(lost);
+            var reused = R(40, true);
+            reused.Attributes.Add(NtfsImage.StandardInformation());
+            reused.Attributes.Add(NtfsImage.FileName(5, 5, "new file.txt"));
+            img.Add(reused);
+
+            // 33: a sparse file: data, two empty clusters, data.
+            var sparse = R(33);
+            sparse.Attributes.Add(NtfsImage.StandardInformation());
+            sparse.Attributes.Add(NtfsImage.FileName(5, 5, "sparse.dat"));
+            sparse.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (500L, 1L), (-1L, 2L), (501L, 1L) }, 16384, 0x8000));
+            img.Add(sparse);
+            img.WriteClusters(500, SparseHead);
+            img.WriteClusters(501, SparseTail);
+
+            // 34: an NTFS-compressed file: one compressed unit of 16 clusters, then an empty unit.
+            var text = new StringBuilder();
+            for (var i = 0; text.Length < 65536; i++) text.Append($"Line {i % 97}: KUDURESCUE gets deleted files back. ");
+            _compressible = Encoding.ASCII.GetBytes(text.ToString().Substring(0, 65536)).Concat(new byte[100000 - 65536]).ToArray();
+            var packed = NtfsImage.CompressLznt1(_compressible.Take(65536).ToArray());
+            var packedClusters = (packed.Length + NtfsImage.Cluster - 1) / NtfsImage.Cluster;
+            Check(packedClusters < 16, "test data compresses");
+            var comp = R(34);
+            comp.Attributes.Add(NtfsImage.StandardInformation());
+            comp.Attributes.Add(NtfsImage.FileName(5, 5, "compressed.txt"));
+            comp.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (600L, (long)packedClusters), (-1L, 16L - packedClusters), (-1L, 16L) }, 100000, 0x0001, 4));
+            img.Add(comp);
+            img.WriteClusters(600, packed);
+
+            // 35 + 36: a file whose data attribute lives in an extension record (attribute list).
+            var listed = R(35);
+            listed.Attributes.Add(NtfsImage.StandardInformation());
+            listed.Attributes.Add(NtfsImage.AttributeList((0x10, 35, 0), (0x30, 35, 0), (0x80, 36, 0)));
+            listed.Attributes.Add(NtfsImage.FileName(24, 2, "split record.mp4"));
+            img.Add(listed);
+            var extension = new NtfsImage.Record { Number = 36, BaseRecord = 35 };
+            extension.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (700L, 2L) }, ListedData.Length));
+            img.Add(extension);
+            img.WriteClusters(700, ListedData);
+
+            // 37: encrypted with EFS.
+            var secret = R(37);
+            secret.Attributes.Add(NtfsImage.StandardInformation(0x4020));
+            secret.Attributes.Add(NtfsImage.FileName(5, 5, "secret.docx"));
+            secret.Attributes.Add(NtfsImage.NonResident(0x80, new[] { (800L, 1L) }, 100, 0x4000));
+            img.Add(secret);
+
+            // 38: a record that was only partly written (its fixup doesn't match): skipped.
+            var torn = R(38);
+            torn.TearFixup = true;
+            torn.Attributes.Add(NtfsImage.StandardInformation());
+            torn.Attributes.Add(NtfsImage.FileName(5, 5, "torn.txt"));
+            torn.Attributes.Add(NtfsImage.Resident(0x80, new byte[10]));
+            img.Add(torn);
+
+            // 39: a long name with its 8.3 short name listed first.
+            var longName = R(39);
+            longName.Attributes.Add(NtfsImage.StandardInformation());
+            longName.Attributes.Add(NtfsImage.FileName(5, 5, "LONGFI~1.TXT", 2));
+            longName.Attributes.Add(NtfsImage.FileName(5, 5, "Long file name.txt", 1));
+            longName.Attributes.Add(NtfsImage.Resident(0x80, Encoding.ASCII.GetBytes("long")));
+            img.Add(longName);
+
+            // 41 + 42: a deleted folder whose folder flag was cleared; its directory index still marks it as a folder.
+            var noFlag = R(41, false, false, 4);
+            noFlag.Attributes.Add(NtfsImage.StandardInformation(0x10));
+            noFlag.Attributes.Add(NtfsImage.FileName(5, 5, "Unflagged"));
+            noFlag.Attributes.Add(NtfsImage.Resident(0x90, new byte[48], "$I30"));
+            img.Add(noFlag);
+            var inside = R(42);
+            inside.Attributes.Add(NtfsImage.StandardInformation());
+            inside.Attributes.Add(NtfsImage.FileName(41, 4, "inside.txt"));
+            inside.Attributes.Add(NtfsImage.Resident(0x80, Encoding.ASCII.GetBytes("inside")));
+            img.Add(inside);
+
+            _image = img.Save(Path.Combine(_temp, "drive.img"));
+            return _image;
+        }
+
+        private static List<FoundFile> _found;
+
+        private static List<FoundFile> Scan()
+        {
+            if (_found != null) return _found;
+            using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
+                _found = QuickScan.RunToEnd(volume, "T:");
+            return _found;
+        }
+
+        private static FoundFile Find(string name) =>
+            Scan().FirstOrDefault(f => f.Name == name) ?? throw new Exception("not found: " + name + " (found " + string.Join(", ", Scan().Select(f => f.RelativePath)) + ")");
+
+        // ================================================================== tests
+
+        private static void DecodesRunlists()
+        {
+            var runs = Runlist.Decode(NtfsImage.EncodeRuns(new[] { (1000L, 8L), (900L, 4L), (-1L, 16L), (70000L, 300L) }), 0, 64);
+            Equal(4, runs.Count, "runs");
+            Equal(1000L, runs[0].Lcn, "first lcn");
+            Equal(900L, runs[1].Lcn, "negative offset");
+            Equal(8L, runs[1].Vcn, "vcn of second run");
+            Check(runs[2].IsSparse && runs[2].Length == 16, "sparse run");
+            Equal(70000L, runs[3].Lcn, "offset relative to the last real run");
+            Equal(28L, runs[3].Vcn, "vcn after a sparse run");
+            var threw = false;
+            try { Runlist.Decode(new byte[] { 0x11, 0x00, 0x05, 0x00 }, 0, 4); }
+            catch (InvalidDataException) { threw = true; }
+            Check(threw, "zero-length run rejected");
+        }
+
+        private static void ReadsBootSector()
+        {
+            var sector = File.ReadAllBytes(Image()).Take(512).ToArray();
+            var boot = NtfsBoot.Parse(sector);
+            Equal(4096, boot.ClusterSize, "cluster size");
+            Equal(1024, boot.RecordSize, "record size");
+            Equal(NtfsImage.MftLcn, boot.MftLcn, "MFT position");
+            var bad = (byte[])sector.Clone();
+            Encoding.ASCII.GetBytes("-FVE-FS-").CopyTo(bad, 3);
+            Check(NtfsBoot.IsBitLocker(bad) && !NtfsBoot.IsNtfs(bad), "BitLocker detected");
+        }
+
+        private static void Fixups()
+        {
+            var data = File.ReadAllBytes(Image());
+            var offset = (int)(NtfsImage.MftLcn * NtfsImage.Cluster + 25 * NtfsImage.RecordSize);
+            var record = FileRecord.Parse(data, offset, NtfsImage.RecordSize, 25);
+            Check(record != null && !record.InUse, "record 25 parsed");
+            Equal("IMG_0001.JPG", record.FileName.Name, "name");
+            var torn = File.ReadAllBytes(Image());
+            Check(FileRecord.Parse(torn, (int)(NtfsImage.MftLcn * NtfsImage.Cluster + 38 * NtfsImage.RecordSize), NtfsImage.RecordSize, 38) == null, "torn record rejected");
+        }
+
+        private static void DecompressesLznt1()
+        {
+            var text = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("abcabcabcabcabc-the quick brown fox-", 300)));
+            var packed = NtfsImage.CompressLznt1(text);
+            Check(packed.Length < text.Length / 3, "compresses well");
+            var unpacked = Lznt1.Decompress(packed, packed.Length, 16384);
+            Check(unpacked.Take(text.Length).SequenceEqual(text), "round trip");
+            Check(unpacked.Skip(text.Length).All(b => b == 0), "padded with zeros");
+
+            var random = NtfsImage.Pattern(5000, 9);
+            var stored = NtfsImage.CompressLznt1(random); // random data: stored chunks
+            Check(Lznt1.Decompress(stored, stored.Length, 8192).Take(5000).SequenceEqual(random), "stored chunks");
+        }
+
+        private static void FindsDeletedFiles()
+        {
+            var names = Scan().Select(f => f.RelativePath).ToList();
+            Check(names.Contains(@"Photos\IMG_0001.JPG"), "file in a folder still in use");
+            Check(names.Contains("note.txt"), "resident file");
+            Check(names.Contains(@"Old\report.pdf"), "file in a deleted folder: " + string.Join(", ", names));
+            Check(names.Contains(@"Lost folders\orphan.txt"), "lost folder");
+            Check(names.Contains(@"Unflagged\inside.txt") && !names.Contains("Unflagged"), "folder recognised by its index");
+            Check(names.Contains(@"Photos\split record.mp4"), "attribute list");
+            Check(names.Contains("Long file name.txt") && !names.Contains("LONGFI~1.TXT"), "long name preferred");
+            Check(!names.Contains("keep.txt"), "files in use aren't listed");
+            Check(!names.Contains("torn.txt"), "torn records are skipped");
+            Check(!names.Any(n => n.StartsWith("$")), "system files aren't listed");
+            Check(!names.Contains("Photos") && !names.Contains("Old"), "folders aren't listed as files");
+
+            var photo = Find("IMG_0001.JPG");
+            Equal(10000L, photo.Size, "size");
+            Equal(NtfsImage.Modified, photo.Modified, "modified time");
+            Equal(NtfsImage.Created, photo.Created, "created time");
+            Equal(FileKind.Photos, photo.Kind, "kind");
+            Equal(FileKind.Videos, Find("split record.mp4").Kind, "kind from extension");
+        }
+
+        private static void RecoveryChances()
+        {
+            Equal(Chance.Excellent, Find("IMG_0001.JPG").Chance, "free clusters");
+            Equal(Chance.Excellent, Find("note.txt").Chance, "resident");
+            Equal(Chance.Overwritten, Find("overwritten.bin").Chance, "reused clusters");
+            var partial = Find("partial.doc");
+            Equal(Chance.Partial, partial.Chance, "half reused");
+            Equal(50, partial.GoodPercent, "percentage left");
+            Equal(Chance.Unrecoverable, Find("secret.docx").Chance, "encrypted");
+            Equal(Chance.Excellent, Find("sparse.dat").Chance, "sparse runs don't count");
+            Equal(Chance.Excellent, Find("compressed.txt").Chance, "compressed");
+        }
+
+        private static void RecoversFiles()
+        {
+            var dest = Path.Combine(_temp, "recovered");
+            RecoverResult result;
+            using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
+                result = Recovery.Run(volume, Scan(), new RecoverOptions { Destination = dest, KeepFolders = true, RecoverPartial = true });
+
+            Check(File.ReadAllBytes(Path.Combine(dest, "Photos", "IMG_0001.JPG")).SequenceEqual(PhotoData), "photo");
+            Equal("hello from inside the index", File.ReadAllText(Path.Combine(dest, "note.txt")), "resident");
+            Check(File.ReadAllBytes(Path.Combine(dest, "Old", "report.pdf")).SequenceEqual(ReportData), "fragmented file in the right order");
+            var sparse = File.ReadAllBytes(Path.Combine(dest, "sparse.dat"));
+            Check(sparse.Take(4096).SequenceEqual(SparseHead) && sparse.Skip(4096).Take(8192).All(b => b == 0) && sparse.Skip(12288).SequenceEqual(SparseTail), "sparse file");
+            Check(File.ReadAllBytes(Path.Combine(dest, "compressed.txt")).SequenceEqual(_compressible), "compressed file");
+            Check(File.ReadAllBytes(Path.Combine(dest, "Photos", "split record.mp4")).SequenceEqual(ListedData), "attribute list file");
+            Check(File.ReadAllBytes(Path.Combine(dest, "partial.doc".Replace(".doc", " (PARTIAL).doc"))).Take(8192).SequenceEqual(PartialData.Take(8192)), "partial file kept, marked");
+            Check(File.Exists(Path.Combine(dest, QuickScan.LostFolders, "orphan.txt")), "lost folder");
+            Check(!File.Exists(Path.Combine(dest, "overwritten.bin")) && !File.Exists(Path.Combine(dest, "secret.docx")), "overwritten and encrypted files skipped");
+            Equal(2, result.Skipped, "skipped");
+            Equal(1, result.Partial, "partial count");
+            Equal(0, result.Problems.Count, "problems: " + string.Join("; ", result.Problems.Select(p => p.File + " " + p.Reason)));
+            Equal(NtfsImage.Modified, File.GetLastWriteTimeUtc(Path.Combine(dest, "Photos", "IMG_0001.JPG")), "modified time restored");
+
+            // Again: names don't collide, and without folders everything goes in one folder.
+            using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
+                Recovery.Run(volume, Scan().Where(f => f.Name == "note.txt").ToList(), new RecoverOptions { Destination = dest, KeepFolders = false });
+            Check(File.Exists(Path.Combine(dest, "note (2).txt")), "second copy gets a free name");
+
+            using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
+            {
+                var preview = Recovery.ReadStart(volume, Find("IMG_0001.JPG"), 100);
+                Check(preview != null && preview.Length == 100 && preview.SequenceEqual(PhotoData.Take(100)), "preview reads the start");
+            }
+        }
+
+        private static void RecoveryNaming()
+        {
+            Equal("a_b_c.txt", Recovery.SafeName("a:b?c.txt"), "reserved characters");
+            Equal("_CON.txt", Recovery.SafeName("CON.txt"), "device names");
+            Equal("name", Recovery.SafeName("name. . "), "trailing dots and spaces");
+            Equal("_", Recovery.SafeName(""), "empty");
+            var f = new FoundFile { Name = "x.jpg", Folder = @"A\B", Chance = Chance.Partial };
+            Equal(Path.Combine("D", "A", "B", "x (PARTIAL).jpg"), Recovery.TargetPath(f, new RecoverOptions { Destination = "D", KeepFolders = true }), "target path");
+            Equal(Path.Combine("D", "x (PARTIAL).jpg"), Recovery.TargetPath(f, new RecoverOptions { Destination = "D", KeepFolders = false }), "without folders");
+
+            var pieces = Recovery.Pieces(new List<DataRun> { new DataRun(0, 100, 10), new DataRun(10, -1, 6), new DataRun(16, 200, 16) }, 8, 16);
+            Equal(3, pieces.Count, "pieces");
+            Equal(108L, pieces[0].Lcn, "cut start");
+            Equal(2L, pieces[0].Length, "cut length");
+            Check(pieces[1].IsSparse && pieces[1].Length == 6, "sparse piece");
+            Equal(8L, pieces[2].Length, "cut end");
+        }
+
+        private static void ReadsRecycleBin()
+        {
+            var path = @"C:\Users\Azeem\Documents\Budget 2026.xlsx";
+            var v2 = new List<byte>();
+            v2.AddRange(BitConverter.GetBytes(2L));
+            v2.AddRange(BitConverter.GetBytes(88123L));
+            v2.AddRange(BitConverter.GetBytes(NtfsImage.Modified.ToFileTimeUtc()));
+            v2.AddRange(BitConverter.GetBytes(path.Length + 1));
+            v2.AddRange(Encoding.Unicode.GetBytes(path + "\0"));
+            var parsed = RecycleBin.Parse(v2.ToArray());
+            Check(parsed != null, "version 2 parsed");
+            Equal(path, parsed.Value.Path, "path");
+            Equal(88123L, parsed.Value.Size, "size");
+            Equal(NtfsImage.Modified, parsed.Value.Deleted, "deleted time");
+
+            var v1 = new byte[24 + 520];
+            BitConverter.GetBytes(1L).CopyTo(v1, 0);
+            BitConverter.GetBytes(5L).CopyTo(v1, 8);
+            Encoding.Unicode.GetBytes(@"D:\old.txt").CopyTo(v1, 24);
+            Equal(@"D:\old.txt", RecycleBin.Parse(v1).Value.Path, "version 1");
+            Check(RecycleBin.Parse(new byte[10]) == null && RecycleBin.Parse(new byte[40]) == null, "rubbish rejected");
+
+            // A real pair of files, as Windows leaves them.
+            var bin = Path.Combine(_temp, "bin");
+            Directory.CreateDirectory(bin);
+            File.WriteAllBytes(Path.Combine(bin, "$IABC123.xlsx"), v2.ToArray());
+            File.WriteAllText(Path.Combine(bin, "$RABC123.xlsx"), "sheet");
+            var item = RecycleBin.Read(Path.Combine(bin, "$IABC123.xlsx"));
+            Equal("Budget 2026.xlsx", item.Name, "name");
+            Equal(@"Users\Azeem\Documents", item.Folder, "folder relative to the drive");
+            Equal(Chance.Excellent, item.Chance, "content still there");
+            Equal(FileKind.Documents, item.Kind, "kind");
+
+            var dest = Path.Combine(_temp, "from-bin");
+            Recovery.Run(null, new List<FoundFile> { item }, new RecoverOptions { Destination = dest });
+            Equal("sheet", File.ReadAllText(Path.Combine(dest, "Users", "Azeem", "Documents", "Budget 2026.xlsx")), "restored from the bin");
+        }
+
+        private static void GroupsFiles()
+        {
+            Equal(FileKind.Photos, FileKinds.Of("IMG.CR2"), "camera raw");
+            Equal(FileKind.Email, FileKinds.Of("Outlook.pst"), "email");
+            Equal(FileKind.Design, FileKinds.Of("logo.psd"), "design");
+            Equal(FileKind.Data, FileKinds.Of("book.epub"), "ebook");
+            Equal(FileKind.Programs, FileKinds.Of("setup.msi"), "programs");
+            Equal(FileKind.Archives, FileKinds.Of("backup.7z"), "archives");
+            Equal(FileKind.Other, FileKinds.Of("noextension"), "other");
+            Equal("Email & contacts", FileKinds.Label(FileKind.Email), "label");
+        }
+
+        private static void CountsClusters()
+        {
+            using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
+            {
+                var bitmap = volume.Bitmap;
+                Check(bitmap.IsAllocated(0) && bitmap.IsAllocated(50) && !bitmap.IsAllocated(51), "single clusters");
+                Equal(51L, bitmap.CountAllocated(0, 100), "whole bytes and loose bits");
+                Equal(1L, bitmap.CountAllocated(301, 2), "partly used range");
+                Equal(5L, bitmap.CountAllocated(NtfsImage.Clusters - 3, 8), "past the end counts as used");
+            }
+        }
+    }
+}

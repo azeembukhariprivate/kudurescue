@@ -1,0 +1,137 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+
+namespace Kudurescue.Core
+{
+    /// <summary>How much of a deleted file is still on the drive.</summary>
+    public enum Chance { Excellent, Partial, Overwritten, Unrecoverable }
+
+    public enum FileKind { Photos, Videos, Documents, Music, Archives, Email, Design, Data, Programs, Other }
+
+    public enum FoundSource { Index, RecycleBin }
+
+    /// <summary>A file that can (perhaps) be recovered.</summary>
+    public sealed class FoundFile : INotifyPropertyChanged
+    {
+        private bool _isChecked;
+
+        public FoundSource Source { get; set; }
+        public string Name { get; set; }
+
+        /// <summary>Where the file was, relative to the drive's root, like "Photos\2026\Goa trip". Empty for the root.</summary>
+        public string Folder { get; set; } = string.Empty;
+
+        public long Size { get; set; }
+        public DateTime Created { get; set; }
+        public DateTime Modified { get; set; }
+        public DateTime Deleted { get; set; }
+        public Chance Chance { get; set; }
+
+        /// <summary>Percentage of the file's data that is still free on the drive (100 for Excellent).</summary>
+        public int GoodPercent { get; set; } = 100;
+
+        public FileKind Kind { get; set; }
+
+        // Found in the drive's index (MFT).
+        public long Record { get; set; } = -1;
+        public byte[] ResidentData { get; set; }
+        public List<DataRun> Runs { get; set; }
+        public bool Compressed { get; set; }
+        public int CompressionUnit { get; set; }
+        public long InitializedSize { get; set; }
+
+        // Found in the Recycle Bin.
+        public string RecyclePath { get; set; }
+        public bool IsFolder { get; set; }
+
+        public bool IsChecked
+        {
+            get => _isChecked;
+            set
+            {
+                if (_isChecked == value) return;
+                _isChecked = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsChecked)));
+                CheckedChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        // Text for the file list.
+        public string SizeText => IsFolder ? (Size > 0 ? "Folder · " + Format.Size(Size) : "Folder") : Format.Size(Size);
+        public string ModifiedText => Modified > new DateTime(1980, 1, 1) ? Modified.ToLocalTime().ToString("d MMM yyyy") : string.Empty;
+        public string ChanceText => FileKinds.ChanceLabel(Chance, GoodPercent);
+        public string FolderText => Folder.Length == 0 ? "\\" : Folder;
+        public string Tone => Chance == Chance.Excellent ? "ok" : Chance == Chance.Partial ? "warn" : "bad";
+        public bool CanRecover => Chance == Chance.Excellent || Chance == Chance.Partial;
+
+        public string Extension => Path.GetExtension(Name ?? string.Empty).ToLowerInvariant();
+        public string RelativePath => Folder.Length == 0 ? Name : Folder + "\\" + Name;
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        /// <summary>Raised when any file is ticked or unticked, so totals can be updated.</summary>
+        public static event EventHandler CheckedChanged;
+    }
+
+    /// <summary>Groups files by type, from their extension.</summary>
+    public static class FileKinds
+    {
+        private static readonly Dictionary<string, FileKind> Map = new Dictionary<string, FileKind>(StringComparer.OrdinalIgnoreCase);
+
+        static FileKinds()
+        {
+            void Add(FileKind kind, string list)
+            {
+                foreach (var e in list.Split(' ')) Map["." + e] = kind;
+            }
+            Add(FileKind.Photos, "jpg jpeg jpe jfif png gif bmp tif tiff webp heic heif avif ico raw cr2 cr3 crw nef nrw arw srf sr2 orf rw2 raf dng pef srw x3f 3fr erf kdc mrw psb");
+            Add(FileKind.Videos, "mp4 m4v mov avi mkv wmv flv webm mpg mpeg m2ts mts ts 3gp 3g2 vob ogv mxf divx");
+            Add(FileKind.Documents, "pdf doc docx docm dot dotx xls xlsx xlsm xlsb xlt xltx ppt pptx pptm pps ppsx odt ods odp odg rtf txt md pages numbers key wps wpd xps oxps one");
+            Add(FileKind.Music, "mp3 wav flac m4a aac ogg oga opus wma aif aiff alac mid midi amr ape");
+            Add(FileKind.Archives, "zip rar 7z tar gz tgz bz2 tbz2 xz txz zst cab arj lzh lha z");
+            Add(FileKind.Email, "pst ost eml msg mbox emlx vcf ics vcs");
+            Add(FileKind.Design, "psd ai eps svg cdr indd idml dwg dxf sketch fig xd afdesign afphoto afpub skp blend fbx obj stl 3ds max c4d");
+            Add(FileKind.Data, "epub mobi azw azw3 fb2 djvu csv tsv json xml yaml yml html htm sql sqlite sqlite3 db mdb accdb qbw qbb log ini cfg conf cs c cpp h hpp java py js ts jsx tsx php rb go rs swift kt vb ps1 bat cmd sh css scss ipynb");
+            Add(FileKind.Programs, "exe msi msix appx dll sys iso img vhd vhdx vmdk vdi ova qcow2 apk ttf otf woff woff2 jar");
+        }
+
+        public static FileKind Of(string name) =>
+            Map.TryGetValue(Path.GetExtension(name ?? string.Empty), out var kind) ? kind : FileKind.Other;
+
+        public static string Label(FileKind kind)
+        {
+            switch (kind)
+            {
+                case FileKind.Email: return "Email & contacts";
+                case FileKind.Design: return "Design";
+                case FileKind.Data: return "Data & code";
+                case FileKind.Programs: return "Programs & disks";
+                default: return kind.ToString();
+            }
+        }
+
+        public static string ChanceLabel(Chance chance, int goodPercent)
+        {
+            switch (chance)
+            {
+                case Chance.Excellent: return "Excellent";
+                case Chance.Partial: return $"Partial · {goodPercent}%";
+                case Chance.Overwritten: return "Overwritten";
+                default: return "Encrypted";
+            }
+        }
+
+        public static string ChanceExplained(FoundFile f)
+        {
+            switch (f.Chance)
+            {
+                case Chance.Excellent: return f.Source == FoundSource.RecycleBin ? "Excellent: it's still in the Recycle Bin" : "Excellent: every part is still on the drive";
+                case Chance.Partial: return $"Partial: {f.GoodPercent}% is still on the drive; the rest has been reused by other files";
+                case Chance.Overwritten: return "Overwritten: other files now use this space";
+                default: return "Encrypted by Windows (EFS): it can't be recovered without the original user's key";
+            }
+        }
+    }
+}

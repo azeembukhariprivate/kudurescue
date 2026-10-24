@@ -1,0 +1,17 @@
+KUDURESCUE - third-party notices
+================================
+
+KUDURESCUE is released under the MIT License (see LICENSE.txt).
+It does not include any third-party code or files. Its recovery engine
+(reading NTFS drives, the Recycle Bin, and NTFS compression) is its own code,
+written from the publicly documented NTFS on-disk format.
+
+It uses the following part of Windows, which is NOT included with KUDURESCUE:
+
+1. Microsoft .NET Framework 4.8
+-------------------------------
+KUDURESCUE runs on the .NET Framework 4.8, which is part of Windows 10 and 11
+and is not redistributed with KUDURESCUE.
+
+KUDURESCUE is not affiliated with, sponsored or endorsed by Microsoft.
+Windows and NTFS are names of Microsoft Corporation.
