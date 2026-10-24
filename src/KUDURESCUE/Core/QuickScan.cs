@@ -43,6 +43,9 @@ namespace Kudurescue.Core
         /// <summary>What <see cref="Done"/> and <see cref="Total"/> count, like "Index entries" or "Folders".</summary>
         public string ProgressLabel { get; set; } = "Index entries";
 
+        /// <summary>True when <see cref="Done"/> and <see cref="Total"/> are bytes (Deep scan).</summary>
+        public bool ProgressInBytes { get; set; }
+
         public TimeSpan Elapsed => _clock.Elapsed;
         public int Unreadable { get; set; }
         public bool IsDone => State == ScanState.Finished || State == ScanState.Stopped || State == ScanState.Failed;

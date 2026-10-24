@@ -71,7 +71,7 @@ namespace Kudurescue.Core
     /// is replaced by 0xE5 and its clusters are freed in the FAT, but its long name, size and first cluster stay in the folder.
     /// The cluster chain is lost, so the file is read from consecutive clusters, which is right for most files on these drives.
     /// </summary>
-    public sealed class FatVolume : IVolume
+    public sealed class FatVolume : IVolume, IFreeSpace
     {
         private const int PageBytes = 1 << 20;
         private readonly bool _ownsDevice;
@@ -111,6 +111,21 @@ namespace Kudurescue.Core
                 default:
                     var v = ReadUInt(cluster * 3 / 2, 2);
                     return (cluster & 1) == 0 ? v & 0x0FFF : v >> 4;
+            }
+        }
+
+        public IEnumerable<(long Start, long Length)> FreeRanges()
+        {
+            long start = -1;
+            for (long c = 2; c <= Boot.MaxCluster + 1; c++)
+            {
+                var free = c <= Boot.MaxCluster && Entry(c) == 0;
+                if (free && start < 0) start = c;
+                else if (!free && start >= 0)
+                {
+                    yield return (ClusterOffset(start), (c - start) * ClusterSize);
+                    start = -1;
+                }
             }
         }
 

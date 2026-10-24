@@ -389,7 +389,7 @@ namespace Kudurescue.Views
                 Ui.Banner(f.Chance == Chance.Excellent ? "IconCheck" : "IconWarn", Ui.Text(FileKinds.ChanceExplained(f), 12, wrap: true),
                     f.Chance == Chance.Excellent ? "OkBg" : f.Chance == Chance.Partial || f.Chance == Chance.Unsure ? "WarnBg" : "BadBg",
                     f.Chance == Chance.Excellent ? "OkText" : f.Chance == Chance.Partial || f.Chance == Chance.Unsure ? "WarnText" : "BadText"),
-                Ui.Mono("Was in " + _drive + "\\" + f.Folder, 11.5, "SubtleText").Margin(0, 10, 0, 0));
+                Ui.Mono(f.Source == FoundSource.Carved ? $"Found {Format.Size(f.Offset)} into the drive" : "Was in " + _drive + "\\" + f.Folder, 11.5, "SubtleText").Margin(0, 10, 0, 0));
             ((TextBlock)info.Children[info.Children.Count - 1]).TextWrapping = TextWrapping.Wrap;
             if (!string.IsNullOrEmpty(f.Note)) info.Children.Add(Ui.Subtle(f.Note, 12).Margin(0, 8, 0, 0));
             if (f.Source == FoundSource.RecycleBin && f.Deleted > DateTime.MinValue)

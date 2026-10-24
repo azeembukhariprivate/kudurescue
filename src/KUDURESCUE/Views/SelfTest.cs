@@ -43,6 +43,7 @@ namespace Kudurescue.Views
             Step("Recover files byte for byte", RecoverFiles);
             Step("FAT32 drive: delete, find and recover files", () => OtherFormat("fat32"));
             Step("exFAT drive: delete, find and recover files", () => OtherFormat("exfat"));
+            Step("Deep scan: deleted files, then a formatted drive", DeepScanRound);
 
             Step("Load themes and styles", () => ThemeManager.Init(ThemeMode.Light));
             Step("Theme keys exist", () =>
@@ -442,6 +443,111 @@ namespace Kudurescue.Views
             }
             main.ShowResultsPage();
             Pump();
+
+            // A Deep scan through the screens too.
+            main.ShowDrives();
+            Pump();
+            main.BeginScan(_drive, true);
+            until = DateTime.UtcNow.AddSeconds(300);
+            while (main.Step != 2 && DateTime.UtcNow < until) Pump();
+            Expect(main.Step == 2, "results shown after a Deep scan");
+            _log.AppendLine($"      Deep scan through the screens: {main.Results.Files.Count} files");
+        }
+
+        // ================================================================== deep scan
+
+        private static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
+        private static byte[] BE16(int v) => new[] { (byte)(v >> 8), (byte)v };
+        private static byte[] BE32(long v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+        private static byte[] NoFF(int n, int seed) => Pattern(n, seed).Select(b => b == 0xFF ? (byte)0x7E : b).ToArray();
+
+        /// <summary>Real files of the main types, with valid structures, for Deep scan to find.</summary>
+        private static Dictionary<string, byte[]> CarveSet()
+        {
+            var jpeg = Cat(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }, BE16(16), Encoding.ASCII.GetBytes("JFIF\0"), new byte[9],
+                new byte[] { 0xFF, 0xDB }, BE16(67), NoFF(65, 51), new byte[] { 0xFF, 0xDA }, BE16(12), NoFF(10, 52),
+                NoFF(400_000, 53), new byte[] { 0xFF, 0xD9 });
+            byte[] Chunk(string type, byte[] data) => Cat(BE32(data.Length), Encoding.ASCII.GetBytes(type), data, new byte[4]);
+            var png = Cat(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, Chunk("IHDR", new byte[13]), Chunk("IDAT", Pattern(250_000, 54)), Chunk("IEND", new byte[0]));
+            var pdf = Cat(Encoding.ASCII.GetBytes("%PDF-1.7\n"), Pattern(150_000, 55).Select(b => (byte)(32 + b % 90)).ToArray(), Encoding.ASCII.GetBytes("\ntrailer << >>\n%%EOF\n"));
+            var mp4 = Cat(BE32(20), Encoding.ASCII.GetBytes("ftypisom"), BE32(512), Encoding.ASCII.GetBytes("isom"), BE32(16), Encoding.ASCII.GetBytes("moov"), new byte[8],
+                BE32(3_000_008), Encoding.ASCII.GetBytes("mdat"), Pattern(3_000_000, 56));
+            byte[] docx;
+            using (var ms = new MemoryStream())
+            {
+                using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, true))
+                {
+                    foreach (var name in new[] { "[Content_Types].xml", "word/document.xml", "word/media/image1.bin" })
+                    {
+                        var entry = zip.CreateEntry(name, name.EndsWith(".bin") ? System.IO.Compression.CompressionLevel.NoCompression : System.IO.Compression.CompressionLevel.Optimal);
+                        using (var w = entry.Open())
+                        {
+                            var data = name.EndsWith(".bin") ? Pattern(200_000, 57) : Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("<w:p>KUDURESCUE</w:p>", 2000)));
+                            w.Write(data, 0, data.Length);
+                        }
+                    }
+                }
+                docx = ms.ToArray();
+            }
+            return new Dictionary<string, byte[]> { [".jpg"] = jpeg, [".png"] = png, [".pdf"] = pdf, [".mp4"] = mp4, [".docx"] = docx };
+        }
+
+        private static void DeepScanRound()
+        {
+            var used = new HashSet<char>(DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])));
+            var letter = "RSTUVWXYZQPONMLKJ".First(c => !used.Contains(c));
+            var drive = letter + ":";
+            var vhd = Path.Combine(_temp, "kudurescue-deep.vhdx");
+            Diskpart($"create vdisk file=\"{vhd}\" maximum=200 type=expandable", $"select vdisk file=\"{vhd}\"", "attach vdisk",
+                "create partition primary", "format fs=ntfs quick label=KRDEEP", $"assign letter={letter}");
+            try
+            {
+                var until = DateTime.UtcNow.AddSeconds(30);
+                while (!Directory.Exists(drive + "\\") && DateTime.UtcNow < until) Thread.Sleep(250);
+                var set = CarveSet();
+                foreach (var pair in set) File.WriteAllBytes(Path.Combine(drive + "\\", "sample" + pair.Key), pair.Value);
+                FlushDrive(drive);
+                foreach (var pair in set) File.Delete(Path.Combine(drive + "\\", "sample" + pair.Key));
+                FlushDrive(drive);
+
+                // 1. Deleted files: every one must be found and come back identical.
+                var found = DeepFind(drive, set, "after deleting");
+                foreach (var ext in set.Keys) Expect(found.Contains(ext), ext + " found and identical after deleting");
+
+                // 2. The drive is formatted (quick format: a new, empty file index). Deep scan should still find the files.
+                Diskpart($"select volume {letter}", "format fs=ntfs quick label=FORMATTED");
+                Thread.Sleep(2000);
+                found = DeepFind(drive, set, "after formatting");
+                Expect(found.Count >= 3, $"most files found after formatting, got {found.Count} of {set.Count}");
+            }
+            finally
+            {
+                Diskpart($"select vdisk file=\"{vhd}\"", "detach vdisk");
+            }
+        }
+
+        /// <summary>Deep scans a drive and returns the types whose sample came back byte for byte.</summary>
+        private static HashSet<string> DeepFind(string drive, Dictionary<string, byte[]> set, string when)
+        {
+            var ok = new HashSet<string>();
+            var watch = Stopwatch.StartNew();
+            var dest = Path.Combine(_temp, "deep-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            var device = VolumeDevice.Open(drive);
+            using (var deep = new DeepVolume(device, Volumes.Open(device, false)))
+            {
+                var files = QuickScan.RunToEnd(deep, drive);
+                _log.AppendLine($"      Deep scan {when}: {files.Count} files in {watch.Elapsed.TotalSeconds:0.0}s, searched {deep.Free.Bytes / (1024 * 1024)} MB of {deep.FormatName}");
+                Recovery.Run(deep, files, new RecoverOptions { Destination = dest, KeepFolders = false });
+                foreach (var pair in set)
+                {
+                    var match = files.FirstOrDefault(f => f.Extension == pair.Key && f.Size == pair.Value.Length &&
+                                                          File.Exists(Path.Combine(dest, f.Name)) && File.ReadAllBytes(Path.Combine(dest, f.Name)).SequenceEqual(pair.Value));
+                    _log.AppendLine($"      {pair.Key}: " + (match != null ? $"found, identical ({match.Chance})" :
+                        "not identical (" + string.Join(", ", files.Where(f => f.Extension == pair.Key).Select(f => $"{f.Size} bytes {f.Chance}")) + ")"));
+                    if (match != null) ok.Add(pair.Key);
+                }
+            }
+            return ok;
         }
 
         // ================================================================== windows

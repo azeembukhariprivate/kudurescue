@@ -11,7 +11,7 @@ namespace Kudurescue.Core
 
     public enum FileKind { Photos, Videos, Documents, Music, Archives, Email, Design, Data, Programs, Other }
 
-    public enum FoundSource { Index, RecycleBin }
+    public enum FoundSource { Index, RecycleBin, Carved }
 
     /// <summary>A file that can (perhaps) be recovered.</summary>
     public sealed class FoundFile : INotifyPropertyChanged
@@ -45,6 +45,9 @@ namespace Kudurescue.Core
         public bool Compressed { get; set; }
         public int CompressionUnit { get; set; }
         public long InitializedSize { get; set; }
+
+        /// <summary>Found by Deep scan: where the file starts on the drive, in bytes.</summary>
+        public long Offset { get; set; } = -1;
 
         // Found in the Recycle Bin.
         public string RecyclePath { get; set; }

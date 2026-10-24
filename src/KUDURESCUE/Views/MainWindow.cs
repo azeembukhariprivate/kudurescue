@@ -178,12 +178,20 @@ namespace Kudurescue.Views
                 Ui.Subtle("Files in the Recycle Bin come back perfectly, with no scan.", 12.5).Margin(0, 3, 0, 12), bin), 18);
             FillRecycleBin(bin);
 
-            var quick = new RadioButton { IsChecked = true, GroupName = "depth" }.Styled("OptionCard");
+            var canQuick = _drive != null && _drive.Size > 0 && (_drive.IsNtfs || _drive.IsFat);
+            if (!canQuick && _drive != null) _deep = true;
+            var quick = new RadioButton { IsChecked = !_deep, IsEnabled = canQuick, GroupName = "depth" }.Styled("OptionCard");
             quick.Content = Ui.Column(Ui.Row(Ui.Text("Quick scan", 13.5, bold: true), Ui.Chip("Recommended").Margin(8, 0, 0, 0)),
                 Ui.Subtle("Recently deleted files with their names and folders. Usually a minute or two.", 12).Margin(0, 4, 0, 0));
-            var deep = new RadioButton { IsEnabled = false, GroupName = "depth" }.Styled("OptionCard");
-            deep.Content = Ui.Column(Ui.Row(Ui.Text("Deep scan", 13.5, bold: true), Ui.Chip("Coming in version 1.2", Tone.Neutral).Margin(8, 0, 0, 0)),
-                Ui.Subtle("For formatted or damaged drives: finds photos, videos, documents and more by their contents.", 12).Margin(0, 4, 0, 0));
+            var deep = new RadioButton { IsChecked = _deep, GroupName = "depth" }.Styled("OptionCard");
+            var searched = _drive == null ? 0 : _drive.Size > 0 && (_drive.IsNtfs || _drive.IsFat) ? _drive.Free : _drive.Size;
+            var where = _drive == null ? string.Empty : _drive.Size > 0 && (_drive.IsNtfs || _drive.IsFat)
+                ? $" Searches the {Format.Size(searched)} of free space, where deleted files are" + (searched > 0 ? $": about {Format.Duration(TimeSpan.FromSeconds(searched / 120e6))}." : ".")
+                : " Searches the whole drive, because its format can't be read.";
+            deep.Content = Ui.Column(Ui.Text("Deep scan", 13.5, bold: true),
+                Ui.Subtle("For formatted or damaged drives: finds photos, videos, documents, music, archives and more by their contents. Names and folders aren't kept." + where, 12).Margin(0, 4, 0, 0));
+            quick.Checked += (s, e) => { _deep = false; RefreshDriveFooter(); };
+            deep.Checked += (s, e) => { _deep = true; RefreshDriveFooter(); };
             var depth = Ui.Card(Ui.Column(Ui.Heading("How deep?").Margin(0, 0, 0, 12), quick, deep), 18);
 
             var grid = Ui.Columns(Ui.Star(1.35), Ui.Px(16), Ui.Star());
@@ -231,7 +239,7 @@ namespace Kudurescue.Views
 
         private static IEnumerable<FrameworkElement> DriveChips(DriveDetails d)
         {
-            if (d.Size <= 0) { yield return Ui.Chip(d.Format ?? "Not ready", Tone.Bad); yield break; }
+            if (d.Size <= 0) { yield return Ui.Chip("Unreadable or locked: Deep scan can still search it", Tone.Bad); yield break; }
             if (d.TrimWarning) yield return Ui.Chip("SSD with TRIM: deleted files are usually wiped within minutes", Tone.Warn, "IconWarn");
             else if (d.IsNtfs || d.IsFat) yield return Ui.Chip("Good chance", Tone.Ok);
             if (!d.IsNtfs && !d.IsFat) yield return Ui.Chip($"{d.Format} drives aren't supported", Tone.Neutral);
@@ -270,8 +278,9 @@ namespace Kudurescue.Views
 
         private void RefreshDriveFooter()
         {
-            var start = Ui.Button(_drive == null ? "Start Quick scan" : $"Start Quick scan on {_drive.Letter}", Admin.IsAdmin ? null : "IconShield", "PrimaryButton", (s, e) => StartScan());
-            var reason = ScanBlocker(_drive);
+            var kind = _deep ? "Deep" : "Quick";
+            var start = Ui.Button(_drive == null ? $"Start {kind} scan" : $"Start {kind} scan on {_drive.Letter}", Admin.IsAdmin ? null : "IconShield", "PrimaryButton", (s, e) => StartScan());
+            var reason = ScanBlocker(_drive, _deep);
             start.IsEnabled = reason == null;
             if (reason != null) start.ToolTip = reason;
             else if (!Admin.IsAdmin) start.ToolTip = "Reading a drive directly needs administrator rights. Windows will ask you.";
@@ -283,9 +292,10 @@ namespace Kudurescue.Views
             SetFooter(warning, start);
         }
 
-        private static string ScanBlocker(DriveDetails d)
+        private static string ScanBlocker(DriveDetails d, bool deep)
         {
             if (d == null) return "Choose a drive first.";
+            if (deep) return null; // Deep scan reads the drive directly, whatever its format (BitLocker is checked when it opens)
             if (d.Size <= 0) return "This drive isn't ready. If it's locked with BitLocker, unlock it in File Explorer first.";
             if (!d.IsNtfs && !d.IsFat) return $"{d.Format} drives aren't supported.";
             return null;
@@ -295,36 +305,40 @@ namespace Kudurescue.Views
 
         private void StartScan()
         {
-            if (_drive == null || ScanBlocker(_drive) != null) return;
+            if (_drive == null || ScanBlocker(_drive, _deep) != null) return;
             if (!Admin.IsAdmin)
             {
-                if (Admin.RestartElevated(new[] { "--scan", _drive.Letter })) Close();
+                if (Admin.RestartElevated(_deep ? new[] { "--scan", _drive.Letter, "--deep" } : new[] { "--scan", _drive.Letter })) Close();
                 else Dialogs.Info(this, "KUDURESCUE needs administrator rights to read the drive directly. Press Start again and choose Yes when Windows asks.");
                 return;
             }
-            BeginScan(_drive.Letter);
+            BeginScan(_drive.Letter, _deep);
         }
 
+        private bool _deep;
+
         /// <summary>After restarting as administrator with --scan D:, start straight away.</summary>
-        public void StartScanFromCommandLine(string drive)
+        public void StartScanFromCommandLine(string drive, bool deep = false)
         {
             try
             {
                 var letter = VolumeDevice.DriveLetter(drive) + ":";
                 _drive = _drives.FirstOrDefault(d => d.Letter == letter) ?? _drive;
+                _deep = deep;
                 ShowDrives();
-                if (_drive?.Letter == letter && ScanBlocker(_drive) == null && Admin.IsAdmin) BeginScan(letter);
+                if (_drive?.Letter == letter && ScanBlocker(_drive, deep) == null && Admin.IsAdmin) BeginScan(letter, deep);
             }
             catch (ArgumentException) { /* not a drive letter: just show the start page */ }
         }
 
-        /// <summary>Opens the drive and starts a Quick scan. Also used by the self-test.</summary>
-        public void BeginScan(string letter, IBlockDevice device = null)
+        /// <summary>Opens the drive and starts a Quick or Deep scan. Also used by the self-test.</summary>
+        public void BeginScan(string letter, bool deep = false, IBlockDevice device = null)
         {
             IVolume volume;
             try
             {
-                volume = Volumes.Open(device ?? VolumeDevice.Open(letter));
+                var dev = device ?? VolumeDevice.Open(letter);
+                volume = deep ? OpenDeep(dev) : Volumes.Open(dev);
             }
             catch (Exception ex) when (ex is IOException || ex is InvalidDataException || ex is UnauthorizedAccessException)
             {
@@ -339,6 +353,28 @@ namespace Kudurescue.Views
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             _timer.Tick += (s, e) => UpdateScan();
             _timer.Start();
+        }
+
+        /// <summary>Deep scan searches the free space when the format can be read, otherwise the whole drive. Never a locked BitLocker drive.</summary>
+        private static IVolume OpenDeep(IBlockDevice device)
+        {
+            try
+            {
+                var sector = new byte[Math.Max(512, device.SectorSize)];
+                device.Read(0, sector, 0, sector.Length);
+                if (NtfsBoot.IsBitLocker(sector))
+                    throw new InvalidDataException("This drive is locked with BitLocker. Unlock it in File Explorer first, then try again.");
+                IVolume inner = null;
+                try { inner = Volumes.Open(device, false); }
+                catch (InvalidDataException) { }
+                catch (IOException) { }
+                return new DeepVolume(device, inner);
+            }
+            catch
+            {
+                device.Dispose();
+                throw;
+            }
         }
 
         private TextBlock _scanTitle, _percent, _elapsed, _left, _records, _total, _chanceLine;
@@ -359,8 +395,10 @@ namespace Kudurescue.Views
             _justFound = new StackPanel();
 
             var head = Ui.Columns(Ui.Star(), Ui.Auto);
-            var reading = _scan.Volume is NtfsVolume ? "reading the drive's file index" : "reading the drive's folders";
-            head.Children.Add(Ui.Column(_scanTitle, Ui.Subtle($"Quick scan of {_scan.Volume.FormatName} · {reading} · nothing is written to {_scan.Drive}", 12.5).Margin(0, 3, 0, 0)).At(0, 0));
+            var what = _scan.Volume is DeepVolume dv ? $"Deep scan of {dv.FormatName} · looking for files by their contents"
+                : _scan.Volume is NtfsVolume ? $"Quick scan of {_scan.Volume.FormatName} · reading the drive's file index"
+                : $"Quick scan of {_scan.Volume.FormatName} · reading the drive's folders";
+            head.Children.Add(Ui.Column(_scanTitle, Ui.Subtle($"{what} · nothing is written to {_scan.Drive}", 12.5).Margin(0, 3, 0, 0)).At(0, 0));
             head.Children.Add(_percent.At(0, 1));
 
             var times = Ui.Row(_elapsed, _left.Margin(24, 0, 0, 0), _records.Margin(24, 0, 0, 0));
@@ -413,7 +451,7 @@ namespace Kudurescue.Views
             else if (_scan.State == ScanState.Paused) _left.Inlines.Add(new Run("Paused") { FontWeight = FontWeights.SemiBold });
             _records.Inlines.Clear();
             _records.Inlines.Add(new Run(_scan.ProgressLabel + " ") { Foreground = Ui.Brush("SubtleText") });
-            _records.Inlines.Add(new Run($"{_scan.Done:N0} of {_scan.Total:N0}") { FontWeight = FontWeights.SemiBold });
+            _records.Inlines.Add(new Run(_scan.ProgressInBytes ? $"{Format.Size(_scan.Done)} of {Format.Size(_scan.Total)}" : $"{_scan.Done:N0} of {_scan.Total:N0}") { FontWeight = FontWeights.SemiBold });
             _pause.Content = Ui.Label(_scan.State == ScanState.Paused ? "IconPlay" : "IconPause", _scan.State == ScanState.Paused ? "Resume" : "Pause");
 
             var files = _scan.Files;
@@ -449,7 +487,7 @@ namespace Kudurescue.Views
                 var row = Ui.Columns(Ui.Star(1.1), Ui.Star(1.3), Ui.Px(80), Ui.Px(120));
                 row.Margin = new Thickness(12, 7, 12, 7);
                 row.Children.Add(Ui.Text(f.Name, 13, bold: true).At(0, 0));
-                row.Children.Add(Ui.Mono(_scan.Drive + "\\" + f.Folder, 11.5, "SubtleText").Margin(8, 0, 8, 0).At(0, 1));
+                row.Children.Add(Ui.Mono(f.Source == FoundSource.Carved ? f.Folder : _scan.Drive + "\\" + f.Folder, 11.5, "SubtleText").Margin(8, 0, 8, 0).At(0, 1));
                 var size = Ui.Mono(f.SizeText, 12);
                 size.HorizontalAlignment = HorizontalAlignment.Right;
                 row.Children.Add(size.At(0, 2));
@@ -465,7 +503,7 @@ namespace Kudurescue.Views
                 Dialogs.Error(this, $"The scan of {_scan.Drive} stopped:\n\n{_scan.Error}");
                 if (files.Count == 0) { StartAgain(); return; }
             }
-            var title = $"Quick scan of {_scan.Drive}" + (_scan.State == ScanState.Stopped ? $" (stopped at {fraction * 100:0}%)" : string.Empty);
+            var title = (_scan.Volume is DeepVolume ? "Deep" : "Quick") + $" scan of {_scan.Drive}" + (_scan.State == ScanState.Stopped ? $" (stopped at {fraction * 100:0}%)" : string.Empty);
             ShowResults(files, _scan.Volume, title, false);
         }
 

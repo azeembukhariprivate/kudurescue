@@ -7,7 +7,7 @@ using System.Threading;
 namespace Kudurescue.Core
 {
     /// <summary>An NTFS drive opened read-only: its MFT (the index of every file) and its map of used clusters.</summary>
-    public sealed class NtfsVolume : IVolume
+    public sealed class NtfsVolume : IVolume, IFreeSpace
     {
         private readonly bool _ownsDevice;
 
@@ -28,6 +28,9 @@ namespace Kudurescue.Core
         public int ClusterSize => Boot.ClusterSize;
         public long ClusterOffset(long cluster) => cluster * ClusterSize;
         public void Scan(QuickScan scan, CancellationToken cancel) => new NtfsScanner(this, scan).Run(cancel);
+
+        public IEnumerable<(long Start, long Length)> FreeRanges() =>
+            Bitmap.FreeRuns().Select(r => (r.Start * ClusterSize, r.Length * ClusterSize));
         public int RecordSize => Boot.RecordSize;
         public long RecordCount => MftSize / RecordSize;
 
@@ -270,6 +273,39 @@ namespace Kudurescue.Core
                 }
             }
             return count;
+        }
+
+        /// <summary>Runs of free clusters, in order.</summary>
+        public IEnumerable<(long Start, long Length)> FreeRuns()
+        {
+            if (_unknown)
+            {
+                yield return (0, TotalClusters);
+                yield break;
+            }
+            long start = -1;
+            long c = 0;
+            while (c < TotalClusters)
+            {
+                var byteIndex = c >> 3;
+                var page = Page(byteIndex / PageBytes);
+                var b = (int)(byteIndex % PageBytes);
+                if (b >= page.Length) break;
+                var v = page[b];
+                if ((c & 7) == 0 && c + 8 <= TotalClusters && (v == 0 || v == 0xFF))
+                {
+                    // Eight clusters at once when they're all free or all used.
+                    if (v == 0) { if (start < 0) start = c; }
+                    else if (start >= 0) { yield return (start, c - start); start = -1; }
+                    c += 8;
+                    continue;
+                }
+                var used = (v & (1 << (int)(c & 7))) != 0;
+                if (!used) { if (start < 0) start = c; }
+                else if (start >= 0) { yield return (start, c - start); start = -1; }
+                c++;
+            }
+            if (start >= 0) yield return (start, Math.Min(c, TotalClusters) - start);
         }
 
         private static int PopCount(byte b)

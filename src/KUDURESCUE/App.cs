@@ -12,6 +12,7 @@ namespace Kudurescue
         /// <summary>
         /// KUDURESCUE.exe                 open
         /// KUDURESCUE.exe --scan D:       open and start a Quick scan of D: (used after restarting as administrator)
+        /// KUDURESCUE.exe --scan D: --deep   the same with a Deep scan
         /// KUDURESCUE.exe --self-test     automated checks for the build
         /// </summary>
         [STAThread]
@@ -23,7 +24,8 @@ namespace Kudurescue
             string scan = null;
             for (var i = 0; i < args.Length - 1; i++)
                 if (string.Equals(args[i], "--scan", StringComparison.OrdinalIgnoreCase)) scan = args[i + 1];
-            return app.Run(scan);
+            var deep = args.Any(a => string.Equals(a, "--deep", StringComparison.OrdinalIgnoreCase));
+            return app.Run(scan, deep);
         }
     }
 
@@ -31,7 +33,7 @@ namespace Kudurescue
     {
         public static App Instance => (App)Current;
 
-        public int Run(string scanDrive)
+        public int Run(string scanDrive, bool deep)
         {
             Startup += (s, e) =>
             {
@@ -39,7 +41,7 @@ namespace Kudurescue
                 var main = new MainWindow();
                 MainWindow = main;
                 main.Show();
-                if (!string.IsNullOrEmpty(scanDrive)) main.StartScanFromCommandLine(scanDrive);
+                if (!string.IsNullOrEmpty(scanDrive)) main.StartScanFromCommandLine(scanDrive, deep);
             };
             return Run();
         }

@@ -13,7 +13,7 @@ namespace Kudurescue.Core
     /// Deleting a file only clears the "in use" bit of each entry and frees its clusters in the allocation bitmap,
     /// so names, sizes and locations survive.
     /// </summary>
-    public sealed class ExFatVolume : IVolume
+    public sealed class ExFatVolume : IVolume, IFreeSpace
     {
         private const int PageBytes = 1 << 20;
         private readonly bool _ownsDevice;
@@ -111,6 +111,21 @@ namespace Kudurescue.Core
             var page = Page(_bitmapPages, byteIndex / PageBytes, -1, _bitmapLength, _bitmapClusters);
             var i = (int)(byteIndex % PageBytes);
             return i >= page.Length || (page[i] & (1 << (int)(bit % 8))) != 0;
+        }
+
+        public IEnumerable<(long Start, long Length)> FreeRanges()
+        {
+            long start = -1;
+            for (long c = 2; c <= MaxCluster + 1; c++)
+            {
+                var free = c <= MaxCluster && !IsUsed(c);
+                if (free && start < 0) start = c;
+                else if (!free && start >= 0)
+                {
+                    yield return (ClusterOffset(start), (c - start) * ClusterSize);
+                    start = -1;
+                }
+            }
         }
 
         public long CountUsed(long cluster, long length)

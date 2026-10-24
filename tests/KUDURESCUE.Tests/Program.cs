@@ -34,6 +34,8 @@ namespace Kudurescue.Tests
                 Run("FAT32: deleted files, names, folders, guessed clusters", Fat32);
                 Run("exFAT: deleted files, chains, folders", ExFat);
                 Run("Recognises file types", RecognisesTypes);
+                Run("Deep scan: finds files by their contents", DeepScanFindsFiles);
+                Run("Deep scan: only free space on a readable drive", DeepScanFreeSpace);
             }
             finally
             {
@@ -585,6 +587,84 @@ namespace Kudurescue.Tests
             Equal(true, Signatures.Matches(".jpg", new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0 }), "jpeg");
             Equal(false, Signatures.Matches(".pdf", new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0 }), "not a pdf");
             Equal((bool?)null, Signatures.Matches(".xyz", new byte[8]), "unknown type");
+        }
+
+        private static void DeepScanFindsFiles()
+        {
+            var samples = new List<(string Ext, byte[] Data)>
+            {
+                (".jpg", CarveSamples.Jpeg()), (".png", CarveSamples.Png()), (".gif", CarveSamples.Gif()), (".bmp", CarveSamples.Bmp()),
+                (".pdf", CarveSamples.Pdf()), (".docx", CarveSamples.Docx()), (".mp4", CarveSamples.Mp4()), (".wav", CarveSamples.Wav()),
+                (".mp3", CarveSamples.Mp3()), (".ogg", CarveSamples.Ogg()), (".7z", CarveSamples.SevenZip()), (".sqlite", CarveSamples.Sqlite()),
+                (".exe", CarveSamples.Exe()), (".ttf", CarveSamples.Ttf()), (".webm", CarveSamples.Webm()), (".doc", CarveSamples.Doc()),
+                (".vcf", CarveSamples.Vcf()), (".psd", CarveSamples.Psd())
+            };
+            // Each file starts on a 512-byte boundary, with filler between them (as on a real drive).
+            var image = new List<byte>();
+            var offsets = new List<long>();
+            foreach (var (ext, data) in samples)
+            {
+                while (image.Count % 512 != 0) image.Add(0xAA);
+                image.AddRange(Enumerable.Repeat((byte)0xAA, 1024));
+                offsets.Add(image.Count);
+                image.AddRange(data);
+            }
+            while (image.Count % 512 != 0) image.Add(0xAA);
+            image.AddRange(Enumerable.Repeat((byte)0xAA, 2048));
+            var tailPng = CarveSamples.Png();
+            var tailAt = image.Count;
+            image.AddRange(tailPng); // ends the open-ended PSD
+            image.AddRange(Enumerable.Repeat((byte)0xAA, 4096));
+            var path = Path.Combine(_temp, "raw.img");
+            File.WriteAllBytes(path, image.ToArray());
+
+            List<FoundFile> found;
+            var dest = Path.Combine(_temp, "carved");
+            using (var deep = new DeepVolume(new ImageDevice(path), null))
+            {
+                found = QuickScan.RunToEnd(deep);
+                Recovery.Run(deep, found, new RecoverOptions { Destination = dest, KeepFolders = false });
+            }
+            var problems = new List<string>();
+            for (var i = 0; i < samples.Count; i++)
+            {
+                var (ext, data) = samples[i];
+                var f = found.FirstOrDefault(x => x.Offset == offsets[i]);
+                if (f == null) { problems.Add(ext + " not found"); continue; }
+                if (f.Extension != ext) problems.Add($"{ext} found as {f.Extension}");
+                if (ext == ".psd")
+                {
+                    if (f.Chance != Chance.Unsure || f.Size != tailAt - offsets[i]) problems.Add($"psd should run to the next file as Probably, got {f.Chance} {f.Size}");
+                    continue;
+                }
+                if (f.Chance != Chance.Excellent) problems.Add(ext + " chance " + f.Chance);
+                if (f.Size != data.Length) { problems.Add($"{ext} length {f.Size}, expected {data.Length}"); continue; }
+                if (!File.ReadAllBytes(Path.Combine(dest, f.Name)).SequenceEqual(data)) problems.Add(ext + " content differs");
+            }
+            Check(problems.Count == 0, string.Join("; ", problems));
+            Check(!found.Any(f => f.Extension == ".jpg" && f.Offset != offsets[0]), "the thumbnail inside the JPEG isn't listed on its own");
+            Check(found.Any(f => f.Offset == tailAt && f.Extension == ".png"), "the last file is found too");
+            Check(found.First(f => f.Extension == ".jpg").Folder == @"Photos\JPG" && found.First(f => f.Extension == ".jpg").Name == "Photo 0001.jpg", "named and grouped by type");
+        }
+
+        private static void DeepScanFreeSpace()
+        {
+            var img = new NtfsImage();
+            var free = CarveSamples.Png();
+            var used = CarveSamples.Png();
+            img.WriteClusters(900, free);
+            img.WriteClusters(950, used);
+            img.MarkUsed(950, 2);
+            var path = img.Save(Path.Combine(_temp, "deep-ntfs.img"));
+            using (var device = new ImageDevice(path))
+            using (var deep = new DeepVolume(device, Volumes.Open(device, false), false))
+            {
+                Check(deep.FormatName.Contains("NTFS"), "searches the free space of NTFS");
+                Check(deep.Free.Bytes < device.Length, "only part of the drive is searched");
+                var found = QuickScan.RunToEnd(deep);
+                Check(found.Any(f => f.Offset == 900L * NtfsImage.Cluster && f.Chance == Chance.Excellent), "file in free space found");
+                Check(!found.Any(f => f.Offset == 950L * NtfsImage.Cluster), "used space is skipped");
+            }
         }
     }
 }
