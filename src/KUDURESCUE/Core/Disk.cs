@@ -89,6 +89,10 @@ namespace Kudurescue.Core
                 throw new IOException($"Drive {letter}: can't be opened: {new Win32Exception(error).Message}");
             }
 
+            // Without this, Windows refuses to read the last sectors of a partition beyond the end the file system
+            // declares, which drive copies and Deep scan need. It only widens what may be read.
+            Native.DeviceIoControl(handle, Native.FSCTL_ALLOW_EXTENDED_DASD_IO, null, 0, null, 0, out _, IntPtr.Zero);
+
             var sectorSize = 512;
             var geometry = new byte[24];
             if (Native.DeviceIoControl(handle, Native.IOCTL_DISK_GET_DRIVE_GEOMETRY, null, 0, geometry, geometry.Length, out _, IntPtr.Zero))
@@ -184,6 +188,7 @@ namespace Kudurescue.Core
         public const uint IOCTL_DISK_GET_DRIVE_GEOMETRY = 0x00070000;
         public const uint IOCTL_DISK_GET_LENGTH_INFO = 0x0007405C;
         public const uint IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400;
+        public const uint FSCTL_ALLOW_EXTENDED_DASD_IO = 0x00090083;
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
