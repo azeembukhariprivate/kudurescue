@@ -348,6 +348,14 @@ namespace Kudurescue.Views
                 $"{wanted.Count} recovered through the UI, got {results.LastResult?.Recovered}: " + string.Join("; ", results.LastResult?.Problems.Select(p => p.Reason) ?? new string[0]));
             Expect(File.ReadAllBytes(Path.Combine(_temp, "ui-recovered", @"Photos\2026\Goa trip\IMG_4021.JPG")).SequenceEqual(Expected[@"Photos\2026\Goa trip\IMG_4021.JPG"]), "photo identical");
 
+            // Back and forth between the steps, as people do.
+            for (var i = 0; i < 2; i++)
+            {
+                main.ShowResultsPage();
+                Pump();
+                main.ShowRecoverPage();
+                Pump();
+            }
             main.ShowResultsPage();
             Pump();
         }

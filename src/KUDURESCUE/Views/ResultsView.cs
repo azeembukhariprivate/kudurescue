@@ -160,10 +160,37 @@ namespace Kudurescue.Views
 
         // ================================================================== step 3: pick files
 
+        private UIElement _page;
+        private readonly Grid _header = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+
+        /// <summary>The page is built once (its controls can only have one parent) and refreshed each time it's shown.</summary>
         public UIElement BuildPage()
         {
+            if (_page == null) _page = CreatePage();
             BuildTree();
             BuildChips();
+            BuildHeader();
+            Fill();
+            return _page;
+        }
+
+        private void BuildHeader()
+        {
+            _header.Children.Clear();
+            _header.ColumnDefinitions.Clear();
+            foreach (var w in new[] { Ui.Px(40), Ui.Star(1.3), Ui.Star(), Ui.Px(90), Ui.Px(100), Ui.Px(132) })
+                _header.ColumnDefinitions.Add(new ColumnDefinition { Width = w });
+            _header.Children.Add(SortHeader("Name", "name").At(0, 1));
+            _header.Children.Add(SortHeader("Folder", "folder").At(0, 2));
+            var size = SortHeader("Size", "size");
+            size.HorizontalAlignment = HorizontalAlignment.Right;
+            _header.Children.Add(size.Margin(0, 0, 14, 0).At(0, 3));
+            _header.Children.Add(SortHeader("Modified", "modified").At(0, 4));
+            _header.Children.Add(SortHeader("Recovery chance", "chance").At(0, 5));
+        }
+
+        private UIElement CreatePage()
+        {
 
             var treeCard = Ui.Card(DockTop(Ui.Text("Original folders", 13, bold: true).Margin(8, 0, 0, 8), _tree), 10);
 
@@ -172,19 +199,10 @@ namespace Kudurescue.Views
             searchRow.Children.Add(_search.At(0, 1));
             _search.ToolTip = "Search names";
 
-            var header = Ui.Columns(Ui.Px(40), Ui.Star(1.3), Ui.Star(), Ui.Px(90), Ui.Px(100), Ui.Px(132));
-            header.Margin = new Thickness(0, 4, 0, 0);
-            header.Children.Add(SortHeader("Name", "name").At(0, 1));
-            header.Children.Add(SortHeader("Folder", "folder").At(0, 2));
-            var size = SortHeader("Size", "size");
-            size.HorizontalAlignment = HorizontalAlignment.Right;
-            header.Children.Add(size.Margin(0, 0, 14, 0).At(0, 3));
-            header.Children.Add(SortHeader("Modified", "modified").At(0, 4));
-            header.Children.Add(SortHeader("Recovery chance", "chance").At(0, 5));
             var table = new Grid();
             table.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             table.RowDefinitions.Add(new RowDefinition());
-            table.Children.Add(new Border { Child = header, BorderThickness = new Thickness(0, 0, 0, 1) }.Res(Border.BorderBrushProperty, "BorderBrush").At(0));
+            table.Children.Add(new Border { Child = _header, BorderThickness = new Thickness(0, 0, 0, 1) }.Res(Border.BorderBrushProperty, "BorderBrush").At(0));
             table.Children.Add(_list.At(1));
 
             var top = Ui.Column(
@@ -201,7 +219,6 @@ namespace Kudurescue.Views
             grid.Children.Add(treeCard.At(0, 0));
             grid.Children.Add(center.At(0, 2));
             grid.Children.Add(Ui.Card(_preview, 14).At(0, 4));
-            Fill();
             return grid;
         }
 
@@ -434,13 +451,24 @@ namespace Kudurescue.Views
 
         // ================================================================== step 4: recover
 
+        private UIElement _recoverPage;
+
         public UIElement BuildRecoverPage()
         {
             if (string.IsNullOrEmpty(_destination.Text)) _destination.Text = SuggestDestination();
-            _destination.Res(Control.FontFamilyProperty, "MonoFont");
             _keepFolders.IsChecked = Settings.KeepFolders;
             _partial.IsChecked = Settings.RecoverPartial;
             _partial.Visibility = _files.Any(f => f.IsChecked && f.Chance == Chance.Partial) ? Visibility.Visible : Visibility.Collapsed;
+            if (_recoverPage == null) _recoverPage = CreateRecoverPage();
+            _recoverButton = Ui.Button("Recover", null, "PrimaryButton", (s, e) => StartRecovery());
+            _main.SetFooter(Ui.Button("Back to files", "IconBack", click: (s, e) => _main.ShowResultsPage()), _recoverButton);
+            Validate();
+            return _recoverPage;
+        }
+
+        private UIElement CreateRecoverPage()
+        {
+            _destination.Res(Control.FontFamilyProperty, "MonoFont");
 
             var row = Ui.Columns(Ui.Star(), Ui.Auto);
             row.Children.Add(_destination.At(0, 0));
@@ -457,10 +485,6 @@ namespace Kudurescue.Views
             card.MaxWidth = 680;
             card.VerticalAlignment = VerticalAlignment.Top;
             card.Margin = new Thickness(16, 16, 16, 16);
-
-            _recoverButton = Ui.Button("Recover", null, "PrimaryButton", (s, e) => StartRecovery());
-            _main.SetFooter(Ui.Button("Back to files", "IconBack", click: (s, e) => _main.ShowResultsPage()), _recoverButton);
-            Validate();
             return new ScrollViewer { Content = card, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
         }
 
