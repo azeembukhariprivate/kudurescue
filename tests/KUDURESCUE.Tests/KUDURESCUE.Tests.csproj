@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\src\KUDURESCUE\Core\*.cs" Exclude="..\..\src\KUDURESCUE\Core\ThemeManager.cs" LinkBase="Core" />
+    <Compile Include="..\..\src\KUDURESCUE\Core\*.cs" Exclude="..\..\src\KUDURESCUE\Core\ThemeManager.cs;..\..\src\KUDURESCUE\Core\ShadowCopies.cs" LinkBase="Core" />
   </ItemGroup>
 
 </Project>

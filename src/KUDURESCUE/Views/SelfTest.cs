@@ -41,6 +41,9 @@ namespace Kudurescue.Views
             Step("Write files, then delete them", WriteAndDelete);
             Step("Quick scan finds the deleted files", ScanFindsFiles);
             Step("Recover files byte for byte", RecoverFiles);
+            Step("Drive image: copy the drive, open the copy, recover", ImageRound);
+            Step("VHD files with a partition table (fixed and dynamic)", () => { VhdRound("fixed"); VhdRound("expandable"); });
+            Step("Saved scan: save, open, recover", SavedRound);
             Step("FAT32 drive: delete, find and recover files", () => OtherFormat("fat32"));
             Step("exFAT drive: delete, find and recover files", () => OtherFormat("exfat"));
             Step("Deep scan: deleted files, then a formatted drive", DeepScanRound);
@@ -69,6 +72,14 @@ namespace Kudurescue.Views
             });
             Step("Main window: scan, pick files, recover", () => ScanThroughUi(main));
             Step("Recycle Bin", RecycleBinCheck); // writes to the test drive, so it comes after every recovery from it
+            Step("Previous Versions snapshot", SnapshotRound);
+            Step("Right-click menu on drives", () =>
+            {
+                ShellIntegration.Register();
+                Expect(ShellIntegration.IsRegistered, "the menu is added");
+                ShellIntegration.Remove();
+                Expect(!ShellIntegration.IsRegistered, "the menu is removed");
+            });
             Step("Main window: Recycle Bin results", () =>
             {
                 main.ShowResults(RecycleBin.List(_drive), null, "Recycle Bin on " + _drive, true);
@@ -444,6 +455,19 @@ namespace Kudurescue.Views
             main.ShowResultsPage();
             Pump();
 
+            // A drive image and a saved scan through the screens.
+            main.OpenImage(_imagePath, false);
+            until = DateTime.UtcNow.AddSeconds(120);
+            while (main.Step != 2 && DateTime.UtcNow < until) Pump();
+            Expect(main.Step == 2 && main.Results.Files.Any(f => f.Name == "IMG_4021.JPG"), "the image's files are listed");
+            main.OpenSavedScan(_savedPath);
+            Pump();
+            Expect(main.Step == 2 && main.Results.Files.Count == _found.Count, "the saved scan's files are listed");
+            main.ShowRecoverPage();
+            Pump();
+            main.ShowResultsPage();
+            Pump();
+
             // A Deep scan through the screens too.
             main.ShowDrives();
             Pump();
@@ -452,6 +476,129 @@ namespace Kudurescue.Views
             while (main.Step != 2 && DateTime.UtcNow < until) Pump();
             Expect(main.Step == 2, "results shown after a Deep scan");
             _log.AppendLine($"      Deep scan through the screens: {main.Results.Files.Count} files");
+        }
+
+        // ================================================================== images, saved scans, snapshots
+
+        private static string _imagePath, _savedPath;
+
+        private static void ImageRound()
+        {
+            _imagePath = Path.Combine(_temp, "kudurescue-copy.img");
+            int bad;
+            using (var device = VolumeDevice.Open(_drive))
+                bad = DriveImages.Copy(device, _imagePath, null, CancellationToken.None);
+            Expect(bad == 0, "no unreadable sectors on the test drive");
+            List<FoundFile> found;
+            var dest = Path.Combine(_temp, "from-image");
+            using (var image = DriveImages.OpenFile(_imagePath))
+            {
+                var parts = DriveImages.Partitions(image);
+                Expect(parts.Count == 1 && parts[0].Format == "NTFS", "the copy is one NTFS volume");
+                using (var volume = Volumes.Open(image, false))
+                {
+                    found = QuickScan.RunToEnd(volume, "image");
+                    Recovery.Run(volume, found.Where(f => Expected.ContainsKey(f.RelativePath)).ToList(), new RecoverOptions { Destination = dest });
+                }
+            }
+            foreach (var pair in Expected)
+                Expect(File.Exists(Path.Combine(dest, pair.Key)) && File.ReadAllBytes(Path.Combine(dest, pair.Key)).SequenceEqual(pair.Value), pair.Key + " recovered from the image");
+        }
+
+        /// <summary>A real .vhd made by Windows (with a partition table inside), opened as an image after it's detached.</summary>
+        private static void VhdRound(string type)
+        {
+            var used = new HashSet<char>(DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])));
+            var letter = "RSTUVWXYZQPONMLKJ".First(c => !used.Contains(c));
+            var vhd = Path.Combine(_temp, "kudurescue-" + type + ".vhd");
+            Diskpart($"create vdisk file=\"{vhd}\" maximum=64 type={type}", $"select vdisk file=\"{vhd}\"", "attach vdisk",
+                "create partition primary", "format fs=fat32 quick label=KRVHD", $"assign letter={letter}");
+            var data = Pattern(200_000, 71);
+            var detached = false;
+            try
+            {
+                var until = DateTime.UtcNow.AddSeconds(30);
+                while (!Directory.Exists(letter + ":\\") && DateTime.UtcNow < until) Thread.Sleep(250);
+                var file = Path.Combine(letter + ":\\", "Inside a VHD file.bin");
+                File.WriteAllBytes(file, data);
+                FlushDrive(letter + ":");
+                File.Delete(file);
+                FlushDrive(letter + ":");
+                Diskpart($"select vdisk file=\"{vhd}\"", "detach vdisk");
+                detached = true;
+
+                using (var image = DriveImages.OpenFile(vhd))
+                {
+                    Expect(image is VhdDevice, type + " VHD recognised");
+                    var parts = DriveImages.Partitions(image);
+                    Expect(parts.Count == 1 && parts[0].Format.StartsWith("FAT"), $"one FAT partition inside ({string.Join(", ", parts.Select(p => p.Title))})");
+                    using (var volume = Volumes.Open(new OffsetDevice(image, parts[0].Offset, parts[0].Length, "vhd", false)))
+                    {
+                        var found = QuickScan.RunToEnd(volume, "vhd");
+                        var f = found.FirstOrDefault(x => x.Name == "Inside a VHD file.bin");
+                        Expect(f != null, "deleted file found inside the VHD");
+                        var dest = Path.Combine(_temp, "from-vhd-" + type);
+                        Recovery.Run(volume, new List<FoundFile> { f }, new RecoverOptions { Destination = dest });
+                        Expect(File.ReadAllBytes(Path.Combine(dest, f.Name)).SequenceEqual(data), "identical");
+                    }
+                }
+                _log.AppendLine($"      {type} VHD: partition found, deleted file recovered");
+            }
+            finally
+            {
+                if (!detached) Diskpart($"select vdisk file=\"{vhd}\"", "detach vdisk");
+            }
+        }
+
+        private static void SavedRound()
+        {
+            _savedPath = Path.Combine(_temp, "test" + SavedScan.Extension);
+            using (var device = VolumeDevice.Open(_drive))
+                new SavedScan { Kind = "Quick", Title = "Quick scan of " + _drive, Drive = _drive, Fingerprint = SavedScan.FingerprintOf(device), Finished = true, Files = _found }.Save(_savedPath);
+            var loaded = SavedScan.Load(_savedPath);
+            Expect(loaded.Files.Count == _found.Count, "all files kept");
+            var pdf = loaded.Files.First(f => f.RelativePath == @"Old folder\Inner\report.docx");
+            var dest = Path.Combine(_temp, "from-saved");
+            using (var device = VolumeDevice.Open(_drive))
+            {
+                Expect(SavedScan.FingerprintOf(device) == loaded.Fingerprint, "same drive recognised");
+                using (var volume = Volumes.Open(device, false))
+                    Recovery.Run(volume, new List<FoundFile> { pdf }, new RecoverOptions { Destination = dest });
+            }
+            Expect(File.ReadAllBytes(Path.Combine(dest, @"Old folder\Inner\report.docx")).SequenceEqual(Expected[@"Old folder\Inner\report.docx"]), "recovered from the saved scan");
+        }
+
+        private static void SnapshotRound()
+        {
+            var file = Path.Combine(_drive + "\\", "Snapshot test", "keep me.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file, "kept by Previous Versions");
+            FlushDrive(_drive);
+            string id;
+            try { id = ShadowCopies.Create(_drive); }
+            catch (Exception ex)
+            {
+                _log.AppendLine("      (snapshots aren't available on this machine: " + ex.Message + ")");
+                return;
+            }
+            try
+            {
+                File.Delete(file);
+                var snapshot = ShadowCopies.List(_drive).FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+                Expect(snapshot != null, "the new snapshot is listed");
+                List<FoundFile> found;
+                using (var v = new SnapshotVolume(snapshot.Root, _drive + "\\", snapshot.Created)) found = QuickScan.RunToEnd(v, _drive);
+                var f = found.FirstOrDefault(x => x.Name == "keep me.txt");
+                Expect(f != null && f.Folder == "Snapshot test", "the deleted file is found in the snapshot");
+                var dest = Path.Combine(_temp, "from-snapshot");
+                Recovery.Run(null, new List<FoundFile> { f }, new RecoverOptions { Destination = dest });
+                Expect(File.ReadAllText(Path.Combine(dest, "Snapshot test", "keep me.txt")) == "kept by Previous Versions", "copied back from the snapshot");
+                _log.AppendLine($"      snapshot of {_drive} taken {snapshot.Created.ToLocalTime():HH:mm:ss}: {found.Count} files deleted or changed since");
+            }
+            finally
+            {
+                try { ShadowCopies.Delete(id); } catch { /* ignore */ }
+            }
         }
 
         // ================================================================== deep scan

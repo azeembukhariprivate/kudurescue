@@ -13,6 +13,9 @@ namespace Kudurescue
         /// KUDURESCUE.exe                 open
         /// KUDURESCUE.exe --scan D:       open and start a Quick scan of D: (used after restarting as administrator)
         /// KUDURESCUE.exe --scan D: --deep   the same with a Deep scan
+        /// KUDURESCUE.exe --drive D:\     open with D: chosen (the drive right-click menu)
+        /// KUDURESCUE.exe --open scan.kudurescue   open a saved scan
+        /// KUDURESCUE.exe --register-shell | --unregister   used by the installer
         /// KUDURESCUE.exe --self-test     automated checks for the build
         /// </summary>
         [STAThread]
@@ -21,11 +24,27 @@ namespace Kudurescue
             var app = new App();
             if (args.Any(a => string.Equals(a, "--self-test", StringComparison.OrdinalIgnoreCase))) return app.RunSelfTest();
 
-            string scan = null;
-            for (var i = 0; i < args.Length - 1; i++)
-                if (string.Equals(args[i], "--scan", StringComparison.OrdinalIgnoreCase)) scan = args[i + 1];
+            if (args.Any(a => string.Equals(a, "--register-shell", StringComparison.OrdinalIgnoreCase)))
+            {
+                Settings.ShellMenu = true;
+                ShellIntegration.Register();
+                return 0;
+            }
+            if (args.Any(a => string.Equals(a, "--unregister", StringComparison.OrdinalIgnoreCase)))
+            {
+                ShellIntegration.Remove();
+                return 0;
+            }
+
+            string Value(string name)
+            {
+                for (var i = 0; i < args.Length - 1; i++)
+                    if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) return args[i + 1];
+                return null;
+            }
             var deep = args.Any(a => string.Equals(a, "--deep", StringComparison.OrdinalIgnoreCase));
-            return app.Run(scan, deep);
+            var open = Value("--open") ?? args.FirstOrDefault(a => a.EndsWith(SavedScan.Extension, StringComparison.OrdinalIgnoreCase));
+            return app.Run(Value("--scan"), deep, Value("--drive"), open);
         }
     }
 
@@ -33,7 +52,7 @@ namespace Kudurescue
     {
         public static App Instance => (App)Current;
 
-        public int Run(string scanDrive, bool deep)
+        public int Run(string scanDrive, bool deep, string drive, string savedScan)
         {
             Startup += (s, e) =>
             {
@@ -41,7 +60,10 @@ namespace Kudurescue
                 var main = new MainWindow();
                 MainWindow = main;
                 main.Show();
+                ShellIntegration.Refresh();
                 if (!string.IsNullOrEmpty(scanDrive)) main.StartScanFromCommandLine(scanDrive, deep);
+                else if (!string.IsNullOrEmpty(savedScan)) main.OpenSavedScan(savedScan);
+                else if (!string.IsNullOrEmpty(drive)) main.ChooseDrive(drive);
             };
             return Run();
         }

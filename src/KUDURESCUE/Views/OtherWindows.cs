@@ -45,6 +45,16 @@ namespace Kudurescue.Views
             root.Children.Add(partial);
             root.Children.Add(Ui.Subtle("KUDURESCUE never writes to the drive it recovers from, and won't save recovered files there.", 12).Margin(0, 8, 0, 0));
 
+            root.Children.Add(Ui.Heading("File Explorer", 14).Margin(0, 16, 0, 4));
+            var menu = new CheckBox { Content = "Add \"Recover deleted files with KUDURESCUE\" to drives' right-click menu", IsChecked = Settings.ShellMenu };
+            menu.Click += (s, e) =>
+            {
+                Settings.ShellMenu = menu.IsChecked == true;
+                ShellIntegration.Refresh();
+            };
+            root.Children.Add(menu);
+            root.Children.Add(Ui.Subtle("For your Windows account only. On Windows 11 it's under \"Show more options\".", 12).Margin(27, 0, 0, 0));
+
             root.Children.Add(Ui.Heading("Updates", 14).Margin(0, 16, 0, 4));
             var updates = new CheckBox { Content = "Check for a new KUDURESCUE version when it starts", IsChecked = Settings.CheckForUpdates };
             updates.Click += (s, e) => Settings.CheckForUpdates = updates.IsChecked == true;

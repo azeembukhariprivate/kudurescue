@@ -7,11 +7,12 @@ using System.Text;
 namespace Kudurescue.Core
 {
     /// <summary>A piece of a file on disk: <see cref="Length"/> clusters starting at <see cref="Lcn"/>, or a sparse gap (Lcn = -1).</summary>
+    [System.Runtime.Serialization.DataContract]
     public struct DataRun
     {
-        public long Vcn;
-        public long Lcn;
-        public long Length;
+        [System.Runtime.Serialization.DataMember] public long Vcn;
+        [System.Runtime.Serialization.DataMember] public long Lcn;
+        [System.Runtime.Serialization.DataMember] public long Length;
 
         public bool IsSparse => Lcn < 0;
 

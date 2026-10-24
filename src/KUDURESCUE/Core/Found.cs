@@ -2,56 +2,57 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Runtime.Serialization;
 
 namespace Kudurescue.Core
 {
-    /// <summary>How much of a deleted file is still on the drive.</summary>
     /// <summary>How much of a deleted file is still on the drive. Unsure: still there, but where it starts had to be worked out.</summary>
     public enum Chance { Excellent, Unsure, Partial, Overwritten, Unrecoverable }
 
     public enum FileKind { Photos, Videos, Documents, Music, Archives, Email, Design, Data, Programs, Other }
 
-    public enum FoundSource { Index, RecycleBin, Carved }
+    public enum FoundSource { Index, RecycleBin, Carved, Snapshot }
 
-    /// <summary>A file that can (perhaps) be recovered.</summary>
+    /// <summary>A file that can (perhaps) be recovered. The marked members are kept when a scan is saved.</summary>
+    [DataContract]
     public sealed class FoundFile : INotifyPropertyChanged
     {
         private bool _isChecked;
 
-        public FoundSource Source { get; set; }
-        public string Name { get; set; }
+        [DataMember] public FoundSource Source { get; set; }
+        [DataMember] public string Name { get; set; }
 
         /// <summary>Where the file was, relative to the drive's root, like "Photos\2026\Goa trip". Empty for the root.</summary>
-        public string Folder { get; set; } = string.Empty;
+        [DataMember] public string Folder { get; set; } = string.Empty;
 
-        public long Size { get; set; }
-        public DateTime Created { get; set; }
-        public DateTime Modified { get; set; }
-        public DateTime Deleted { get; set; }
-        public Chance Chance { get; set; }
+        [DataMember] public long Size { get; set; }
+        [DataMember] public DateTime Created { get; set; }
+        [DataMember] public DateTime Modified { get; set; }
+        [DataMember] public DateTime Deleted { get; set; }
+        [DataMember] public Chance Chance { get; set; }
 
         /// <summary>Percentage of the file's data that is still free on the drive (100 for Excellent).</summary>
-        public int GoodPercent { get; set; } = 100;
+        [DataMember] public int GoodPercent { get; set; } = 100;
 
-        public FileKind Kind { get; set; }
+        [DataMember] public FileKind Kind { get; set; }
 
         /// <summary>Something worth knowing about this file, shown in the preview (e.g. how its location was found).</summary>
-        public string Note { get; set; }
+        [DataMember] public string Note { get; set; }
 
         // Found in the drive's index (MFT).
-        public long Record { get; set; } = -1;
-        public byte[] ResidentData { get; set; }
-        public List<DataRun> Runs { get; set; }
-        public bool Compressed { get; set; }
-        public int CompressionUnit { get; set; }
-        public long InitializedSize { get; set; }
+        [DataMember] public long Record { get; set; } = -1;
+        [DataMember] public byte[] ResidentData { get; set; }
+        [DataMember] public List<DataRun> Runs { get; set; }
+        [DataMember] public bool Compressed { get; set; }
+        [DataMember] public int CompressionUnit { get; set; }
+        [DataMember] public long InitializedSize { get; set; }
 
         /// <summary>Found by Deep scan: where the file starts on the drive, in bytes.</summary>
-        public long Offset { get; set; } = -1;
+        [DataMember] public long Offset { get; set; } = -1;
 
         // Found in the Recycle Bin.
-        public string RecyclePath { get; set; }
-        public bool IsFolder { get; set; }
+        [DataMember] public string RecyclePath { get; set; }
+        [DataMember] public bool IsFolder { get; set; }
 
         public bool IsChecked
         {
@@ -74,6 +75,9 @@ namespace Kudurescue.Core
         public bool CanRecover => Chance == Chance.Excellent || Chance == Chance.Unsure || Chance == Chance.Partial;
 
         public string Extension => Path.GetExtension(Name ?? string.Empty).ToLowerInvariant();
+        /// <summary>Recovered by copying an existing file (from the Recycle Bin or a snapshot) rather than reading the drive.</summary>
+        public bool IsCopy => Source == FoundSource.RecycleBin || Source == FoundSource.Snapshot;
+
         public string RelativePath => Folder.Length == 0 ? Name : Folder + "\\" + Name;
 
         public event PropertyChangedEventHandler PropertyChanged;
@@ -135,7 +139,10 @@ namespace Kudurescue.Core
         {
             switch (f.Chance)
             {
-                case Chance.Excellent: return f.Source == FoundSource.RecycleBin ? "Excellent: it's still in the Recycle Bin" : "Excellent: every part is still on the drive";
+                case Chance.Excellent:
+                    return f.Source == FoundSource.RecycleBin ? "Excellent: it's still in the Recycle Bin"
+                        : f.Source == FoundSource.Snapshot ? "Excellent: it's kept in a Previous Versions snapshot"
+                        : "Excellent: every part is still on the drive";
                 case Chance.Unsure: return "Probably: its data is free on the drive, but where it starts had to be worked out. Check the file after recovering it";
                 case Chance.Partial: return $"Partial: {f.GoodPercent}% is still on the drive; the rest has been reused by other files";
                 case Chance.Overwritten: return "Overwritten: other files now use this space";

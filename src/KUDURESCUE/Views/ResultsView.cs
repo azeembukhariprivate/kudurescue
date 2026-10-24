@@ -147,6 +147,18 @@ namespace Kudurescue.Views
         }
 
         public List<FoundFile> Files => _files;
+        public IVolume Volume => _volume;
+        public string Title => _title;
+
+        /// <summary>Set when a stopped Deep scan can carry on; adds a "Continue the Deep scan" button.</summary>
+        public Action Resume { get; set; }
+
+        /// <summary>Recovered files mustn't go back onto the scanned drive. Images and snapshots don't have that limit.</summary>
+        private bool OnScannedDrive(string folder)
+        {
+            if (_drive == null || _drive.Length != 2 || _drive[1] != ':' || _volume is SnapshotVolume) return false;
+            return Drives.IsOnDrive(folder, _drive);
+        }
         public List<FoundFile> Shown => _shown;
         public bool IsRecovering => _cancel != null;
         public RecoverResult LastResult { get; private set; }
@@ -447,7 +459,10 @@ namespace Kudurescue.Views
             untick.IsEnabled = ticked.Count > 0;
             var next = Ui.Button(ticked.Count == 0 ? "Recover…" : $"Recover {Format.Count(ticked.Count, "file")}…", null, "PrimaryButton", (s, e) => _main.ShowRecoverPage());
             next.IsEnabled = ticked.Count > 0;
-            _main.SetFooter(left, untick, tickShown, next);
+            var save = Ui.Button("Save scan…", "IconSave", "GhostButton", (s, e) => _main.SaveCurrentScan());
+            if (Resume != null)
+                _main.SetFooter(left, save, Ui.Button("Continue the Deep scan", "IconPlay", click: (s, e) => Resume()), untick, tickShown, next);
+            else _main.SetFooter(left, save, untick, tickShown, next);
         }
 
         // ================================================================== step 4: recover
@@ -492,14 +507,14 @@ namespace Kudurescue.Views
         private string SuggestDestination()
         {
             var stamp = DateTime.Now.ToString("yyyy-MM-dd HH.mm");
-            var name = $"{_drive.TrimEnd(':')} {stamp}";
+            var name = Recovery.SafeName($"{_drive.TrimEnd(':')} {stamp}");
             var last = Settings.LastDestination;
             try
             {
                 if (!string.IsNullOrEmpty(last))
                 {
                     var parent = Path.GetDirectoryName(last);
-                    if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent) && !Drives.IsOnDrive(parent, _drive)) return Path.Combine(parent, name);
+                    if (!string.IsNullOrEmpty(parent) && Directory.Exists(parent) && !OnScannedDrive(parent)) return Path.Combine(parent, name);
                 }
             }
             catch (Exception ex) when (ex is ArgumentException || ex is IOException) { }
@@ -524,7 +539,7 @@ namespace Kudurescue.Views
                 try
                 {
                     if (!Path.IsPathRooted(dest)) problem = "Enter a full folder path, like F:\\Recovered.";
-                    else if (Drives.IsOnDrive(dest, _drive)) problem = $"{_drive} can't be chosen: saving there could overwrite the files you're recovering.";
+                    else if (OnScannedDrive(dest)) problem = $"{_drive} can't be chosen: saving there could overwrite the files you're recovering.";
                 }
                 catch (ArgumentException) { problem = "That folder name isn't valid."; }
             }

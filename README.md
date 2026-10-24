@@ -21,6 +21,11 @@
   - **Probably**: its data is free, but where it starts had to be worked out (see below).
   - **Overwritten**: other files now use its space; it can't be recovered.
 - **Recycle Bin first**: files still in a drive's Recycle Bin are shown straight away and come back perfectly, with no scan.
+- **Previous Versions**: Windows snapshots of a drive (Volume Shadow Copies) are listed too. KUDURESCUE shows the files that were in a snapshot but have been deleted since, and older versions of files that have changed since, and copies them straight from the snapshot.
+- **Rescue failing drives safely**: *Copy a failing drive first* reads a drive once, sector by sector, into an image file on another drive, skipping unreadable sectors instead of getting stuck. Scan the copy as often as you like without wearing out the drive.
+- **Open drive images**: `.img`, `.dd`, `.raw` and `.vhd` files (fixed and dynamic), including disk images with several partitions (MBR or GPT), where you choose the partition.
+- **Save and open scans**: save what a scan found to a `.kudurescue` file and open it later to recover more, without scanning again. A Deep scan that was stopped carries on from where it got to.
+- **Right-click a drive** in File Explorer → *Recover deleted files with KUDURESCUE* (optional, chosen when installing or in Settings).
 - **Pick what you want**: the original folder tree, search, filters by type (photos, videos, documents, music, archives, email, design, data and code, programs and disks) and by chance, sorting, and a preview of photos and text files before recovering.
 - **Safe by design**:
   - The drive being rescued is opened **read-only**; nothing on it is ever changed.
@@ -30,8 +35,6 @@
 - Handles fragmented, sparse and **NTFS-compressed** files, and files whose details are spread over several index records.
 - Keeps the original folders (optional), restores file dates, and marks partly recovered files with "(PARTIAL)" in the name.
 - Light and dark themes, following Windows.
-
-**Coming next:** drive images, "Previous Versions", saved scans and a right-click menu in 1.3.
 
 ## How it works
 
@@ -62,7 +65,7 @@ Requires Windows 10 or 11 (the .NET Framework 4.8 it uses is already part of Win
 
 ## Administrator rights
 
-Reading a drive directly needs administrator rights. KUDURESCUE starts normally and asks Windows for them only when you start a scan. Showing the Recycle Bin doesn't need them.
+Reading a drive directly needs administrator rights. KUDURESCUE starts normally and asks Windows for them only when you start a scan. Copying a drive, opening a saved scan of a drive and looking for Previous Versions need them too. Showing the Recycle Bin and opening drive images don't.
 
 ## Privacy
 
@@ -78,7 +81,7 @@ dotnet build src/KUDURESCUE/KUDURESCUE.csproj -c Release -o out/KUDURESCUE
 out\KUDURESCUE\KUDURESCUE.exe --self-test
 ```
 
-The tests build small NTFS, FAT32 and exFAT drive images byte by byte (intact, overwritten, partly reused, fragmented, sparse, compressed, split and encrypted files, deleted long and short names, deleted folders, torn records and lost folders) and check the engine against them. `--self-test` needs administrator rights: it creates small virtual drives (VHD) formatted as NTFS, FAT32 and exFAT, writes files to them, deletes them, recovers them with the real engine and compares every byte, runs a Deep scan after deleting and again after formatting a drive, checks the Recycle Bin reader, opens every screen in both themes, writes `self-test.log` and exits. To build the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and compile `installer/KUDURESCUE.iss`.
+The tests build small NTFS, FAT32 and exFAT drive images, disk images with MBR and GPT partition tables, and fixed and dynamic VHD files byte by byte (intact, overwritten, partly reused, fragmented, sparse, compressed, split and encrypted files, deleted long and short names, deleted folders, torn records and lost folders) and check the engine against them. `--self-test` needs administrator rights: it creates small virtual drives (VHD) formatted as NTFS, FAT32 and exFAT, writes files to them, deletes them, recovers them with the real engine and compares every byte, runs a Deep scan after deleting and again after formatting a drive, copies a drive to an image and recovers from the copy, opens real fixed and dynamic VHD files with partition tables, saves and reopens a scan, takes a real Previous Versions snapshot and recovers a file deleted after it, checks the Recycle Bin reader, opens every screen in both themes, writes `self-test.log` and exits. To build the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and compile `installer/KUDURESCUE.iss`.
 
 ## Publishing a new version
 

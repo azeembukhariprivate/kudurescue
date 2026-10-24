@@ -57,7 +57,7 @@ namespace Kudurescue.Core
                 try
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(target));
-                    if (f.Source == FoundSource.RecycleBin)
+                    if (f.IsCopy)
                     {
                         CopyFromRecycleBin(f, target);
                     }
@@ -135,7 +135,7 @@ namespace Kudurescue.Core
             if (f.Chance == Chance.Unrecoverable) return null;
             try
             {
-                if (f.Source == FoundSource.RecycleBin)
+                if (f.IsCopy)
                 {
                     if (f.IsFolder || !File.Exists(f.RecyclePath)) return null;
                     using (var s = new FileStream(f.RecyclePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))

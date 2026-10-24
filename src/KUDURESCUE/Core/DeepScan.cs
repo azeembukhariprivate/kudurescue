@@ -91,6 +91,28 @@ namespace Kudurescue.Core
         /// <summary>How far apart files can start: a cluster when the format is known, otherwise a sector.</summary>
         public int Step => _inner == null ? Math.Max(Unit, Device.SectorSize) : Math.Max(Unit, _inner.ClusterSize);
 
+        /// <summary>Carry on from here (a byte offset), after a saved Deep scan was stopped.</summary>
+        public long ResumeAt { get; set; }
+
+        /// <summary>How far the scan has got (a byte offset); everything before it has been searched.</summary>
+        public long Position { get; private set; }
+
+        public bool Finished { get; private set; }
+
+        private readonly HashSet<long> _known = new HashSet<long>();
+        private readonly Dictionary<FileKind, int> _counters = new Dictionary<FileKind, int>();
+
+        /// <summary>Files found before (when resuming): they aren't added again, and new names carry on numbering.</summary>
+        public void Seed(IEnumerable<FoundFile> files)
+        {
+            foreach (var f in files.Where(f => f.Source == FoundSource.Carved))
+            {
+                _known.Add(f.Offset);
+                _counters.TryGetValue(f.Kind, out var n);
+                _counters[f.Kind] = n + 1;
+            }
+        }
+
         public void Scan(QuickScan scan, CancellationToken cancel)
         {
             scan.ProgressLabel = "Searched";
@@ -98,10 +120,12 @@ namespace Kudurescue.Core
             var free = Free;
             scan.SetTotal(free.Bytes);
             var source = new ByteSource(Device);
-            var counters = new Dictionary<FileKind, int>();
+            var counters = _counters;
             const int chunk = 4 * 1024 * 1024;
             var buffer = new byte[chunk];
-            long done = 0;
+            long done = free.Ranges.Sum(r => Math.Max(0, Math.Min(r.End, ResumeAt) - r.Start));
+            scan.SetDone(done);
+            Position = ResumeAt;
             long skipUntil = -1;
             (long Start, Carved Found)? open = null; // a file whose end is found when the next file starts
 
@@ -118,6 +142,8 @@ namespace Kudurescue.Core
             {
                 var step = Step;
                 var pos = rangeStart;
+                if (rangeEnd <= ResumeAt) continue;
+                if (ResumeAt > rangeStart) pos = rangeStart + (ResumeAt - rangeStart) / step * step; // already searched up to here
                 while (pos < rangeEnd)
                 {
                     scan.Checkpoint(cancel);
@@ -141,10 +167,13 @@ namespace Kudurescue.Core
                     }
                     pos += n;
                     done += n;
+                    Position = pos;
                     scan.SetDone(done);
                 }
                 Close(rangeEnd);
             }
+            Position = Device.Length;
+            Finished = true;
         }
 
         private static byte[] Slice(byte[] b, int offset, int count)
@@ -171,8 +200,9 @@ namespace Kudurescue.Core
             }
         }
 
-        private static void Add(QuickScan scan, FreeMap free, Dictionary<FileKind, int> counters, long start, long length, string ext, bool exact)
+        private void Add(QuickScan scan, FreeMap free, Dictionary<FileKind, int> counters, long start, long length, string ext, bool exact)
         {
+            if (!_known.Add(start)) return; // found before this scan was resumed
             var kind = FileKinds.Of("x" + ext);
             counters.TryGetValue(kind, out var n);
             counters[kind] = ++n;

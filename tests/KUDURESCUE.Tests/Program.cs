@@ -36,6 +36,12 @@ namespace Kudurescue.Tests
                 Run("Recognises file types", RecognisesTypes);
                 Run("Deep scan: finds files by their contents", DeepScanFindsFiles);
                 Run("Deep scan: only free space on a readable drive", DeepScanFreeSpace);
+                Run("Images: partitions (MBR and GPT)", ImagePartitions);
+                Run("Images: fixed and dynamic VHD", VhdFiles);
+                Run("Images: copying a drive", CopiesDrive);
+                Run("Saved scans: save, open, recover", SavedScans);
+                Run("Deep scan carries on from where it stopped", DeepResume);
+                Run("Previous Versions: deleted and changed files", SnapshotCompare);
             }
             finally
             {
@@ -665,6 +671,234 @@ namespace Kudurescue.Tests
                 Check(found.Any(f => f.Offset == 900L * NtfsImage.Cluster && f.Chance == Chance.Excellent), "file in free space found");
                 Check(!found.Any(f => f.Offset == 950L * NtfsImage.Cluster), "used space is skipped");
             }
+        }
+
+        private static byte[] Fat32Bytes()
+        {
+            var img = new Fat32Image();
+            var data = NtfsImage.Pattern(3000, 61);
+            img.Write(100, data);
+            img.Entry(2, "PART~1  TXT", "inside a partition.txt", 100, data.Length, deleted: true);
+            img.Save(Path.Combine(_temp, "part-fat.img"));
+            return img.Data;
+        }
+
+        private static void ImagePartitions()
+        {
+            var fat = Fat32Bytes();
+            // MBR: one FAT32 partition starting at 1 MB.
+            var mbr = new byte[1024 * 1024 + fat.Length];
+            mbr[446 + 4] = 0x0C;
+            BitConverter.GetBytes(2048u).CopyTo(mbr, 446 + 8);
+            BitConverter.GetBytes((uint)(fat.Length / 512)).CopyTo(mbr, 446 + 12);
+            mbr[510] = 0x55; mbr[511] = 0xAA;
+            fat.CopyTo(mbr, 1024 * 1024);
+            var path = Path.Combine(_temp, "mbr.img");
+            File.WriteAllBytes(path, mbr);
+            using (var device = DriveImages.OpenFile(path))
+            {
+                var parts = DriveImages.Partitions(device);
+                Equal(1, parts.Count, "partitions in the MBR");
+                Equal("FAT32", parts[0].Format, "format");
+                Equal(1024L * 1024, parts[0].Offset, "start");
+                using (var volume = Volumes.Open(new OffsetDevice(device, parts[0].Offset, parts[0].Length, "p1", false)))
+                    Check(QuickScan.RunToEnd(volume).Any(f => f.Name == "inside a partition.txt"), "scanned inside the partition");
+            }
+
+            // GPT: the NTFS test drive and the FAT32 one, side by side.
+            var ntfs = File.ReadAllBytes(Image());
+            var gptImage = new byte[2 * 1024 * 1024 + ntfs.Length + fat.Length + 1024 * 1024];
+            gptImage[446 + 4] = 0xEE;
+            gptImage[510] = 0x55; gptImage[511] = 0xAA;
+            Encoding.ASCII.GetBytes("EFI PART").CopyTo(gptImage, 512);
+            BitConverter.GetBytes(2L).CopyTo(gptImage, 512 + 72);
+            BitConverter.GetBytes(128).CopyTo(gptImage, 512 + 80);
+            BitConverter.GetBytes(128).CopyTo(gptImage, 512 + 84);
+            void Entry(int i, long firstLba, long lastLba)
+            {
+                var e = 1024 + i * 128;
+                for (var k = 0; k < 16; k++) gptImage[e + k] = (byte)(k + 1); // any non-zero type
+                BitConverter.GetBytes(firstLba).CopyTo(gptImage, e + 32);
+                BitConverter.GetBytes(lastLba).CopyTo(gptImage, e + 40);
+            }
+            var ntfsLba = 2048L;
+            var fatLba = ntfsLba + ntfs.Length / 512;
+            Entry(0, ntfsLba, fatLba - 1);
+            Entry(1, fatLba, fatLba + fat.Length / 512 - 1);
+            ntfs.CopyTo(gptImage, ntfsLba * 512);
+            fat.CopyTo(gptImage, fatLba * 512);
+            path = Path.Combine(_temp, "gpt.img");
+            File.WriteAllBytes(path, gptImage);
+            using (var device = DriveImages.OpenFile(path))
+            {
+                var parts = DriveImages.Partitions(device);
+                Equal(2, parts.Count, "partitions in the GPT");
+                Equal("NTFS", parts[0].Format, "first is NTFS");
+                Equal("FAT32", parts[1].Format, "second is FAT32");
+                using (var volume = Volumes.Open(new OffsetDevice(device, parts[0].Offset, parts[0].Length, "p1", false)))
+                    Check(QuickScan.RunToEnd(volume).Any(f => f.Name == "IMG_0001.JPG"), "NTFS partition scanned");
+            }
+            // A single volume (no partition table) is the image itself.
+            using (var device = DriveImages.OpenFile(Image()))
+                Equal("NTFS", DriveImages.Partitions(device).Single().Format, "whole-volume image");
+        }
+
+        private static byte[] BE(uint v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+        private static byte[] BE(ulong v) => BE((uint)(v >> 32)).Concat(BE((uint)v)).ToArray();
+
+        private static byte[] VhdFooter(long size, uint type, long dataOffset)
+        {
+            var f = new byte[512];
+            Encoding.ASCII.GetBytes("conectix").CopyTo(f, 0);
+            BE((ulong)dataOffset).CopyTo(f, 16);
+            BE((ulong)size).CopyTo(f, 40);
+            BE((ulong)size).CopyTo(f, 48);
+            BE(type).CopyTo(f, 60);
+            return f;
+        }
+
+        private static void VhdFiles()
+        {
+            var raw = File.ReadAllBytes(Image());
+            var fixedPath = Path.Combine(_temp, "fixed.vhd");
+            File.WriteAllBytes(fixedPath, raw.Concat(VhdFooter(raw.Length, 2, -1)).ToArray());
+            using (var d = DriveImages.OpenFile(fixedPath))
+            {
+                Check(d is VhdDevice && d.Length == raw.Length, "fixed VHD size");
+                var all = new byte[raw.Length];
+                d.Read(0, all, 0, all.Length);
+                Check(all.SequenceEqual(raw), "fixed VHD reads the same bytes");
+            }
+
+            // Dynamic: footer copy, dynamic header, block table, then 1 MB blocks (each after a 512-byte sector bitmap).
+            const int block = 1024 * 1024;
+            var blocks = (raw.Length + block - 1) / block;
+            var file = new List<byte>();
+            file.AddRange(VhdFooter(raw.Length, 3, 512));
+            var header = new byte[1024];
+            Encoding.ASCII.GetBytes("cxsparse").CopyTo(header, 0);
+            BE(ulong.MaxValue).CopyTo(header, 8);
+            BE((ulong)1536).CopyTo(header, 16);
+            BE((uint)blocks).CopyTo(header, 28);
+            BE((uint)block).CopyTo(header, 32);
+            file.AddRange(header);
+            var batBytes = (blocks * 4 + 511) / 512 * 512;
+            var bat = Enumerable.Repeat((byte)0xFF, batBytes).ToArray();
+            var next = (1536 + batBytes) / 512;
+            var data = new List<byte>();
+            for (var b = 0; b < blocks; b++)
+            {
+                var chunk = raw.Skip(b * block).Take(block).ToArray();
+                if (chunk.All(x => x == 0)) continue; // never written: left out
+                BE((uint)next).CopyTo(bat, b * 4);
+                data.AddRange(new byte[512]);
+                data.AddRange(chunk.Concat(new byte[block - chunk.Length]));
+                next += (512 + block) / 512;
+            }
+            file.AddRange(bat);
+            file.AddRange(data);
+            file.AddRange(VhdFooter(raw.Length, 3, 512));
+            var dynamicPath = Path.Combine(_temp, "dynamic.vhd");
+            File.WriteAllBytes(dynamicPath, file.ToArray());
+            using (var d = DriveImages.OpenFile(dynamicPath))
+            {
+                var all = new byte[raw.Length];
+                d.Read(0, all, 0, all.Length);
+                Check(all.SequenceEqual(raw), "dynamic VHD reads the same bytes");
+                using (var volume = Volumes.Open(d, false))
+                    Check(QuickScan.RunToEnd(volume).Any(f => f.Name == "IMG_0001.JPG"), "scanned inside the dynamic VHD");
+            }
+        }
+
+        private static void CopiesDrive()
+        {
+            var target = Path.Combine(_temp, "copy.img");
+            using (var d = new ImageDevice(Image()))
+                Equal(0, DriveImages.Copy(d, target, null, System.Threading.CancellationToken.None), "no bad sectors");
+            Check(File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(Image())), "the copy is identical");
+        }
+
+        private static void SavedScans()
+        {
+            var path = Path.Combine(_temp, "saved" + SavedScan.Extension);
+            using (var device = new ImageDevice(Image()))
+            {
+                var saved = new SavedScan { Kind = "Quick", Title = "Quick scan of T:", ImagePath = Image(), Fingerprint = SavedScan.FingerprintOf(device), Finished = true, Files = Scan() };
+                saved.Save(path);
+            }
+            var loaded = SavedScan.Load(path);
+            Equal(Scan().Count, loaded.Files.Count, "files kept");
+            var before = Scan().First(f => f.Name == "report.pdf");
+            var after = loaded.Files.First(f => f.Name == "report.pdf");
+            Check(after.Runs.Count == 2 && after.Runs[1].Lcn == before.Runs[1].Lcn && after.Folder == before.Folder && after.Modified == before.Modified && after.Chance == before.Chance, "file details kept");
+            Check(loaded.Files.First(f => f.Name == "note.txt").ResidentData.SequenceEqual(Encoding.ASCII.GetBytes("hello from inside the index")), "data inside the index kept");
+            using (var device = new ImageDevice(loaded.ImagePath))
+            {
+                Equal(loaded.Fingerprint, SavedScan.FingerprintOf(device), "same drive");
+                using (var volume = Volumes.Open(device, false))
+                {
+                    var dest = Path.Combine(_temp, "from-saved");
+                    Recovery.Run(volume, new List<FoundFile> { after }, new RecoverOptions { Destination = dest });
+                    Check(File.ReadAllBytes(Path.Combine(dest, "Old", "report.pdf")).SequenceEqual(ReportData), "recovered from a saved scan");
+                }
+            }
+            var junk = Path.Combine(_temp, "junk" + SavedScan.Extension);
+            File.WriteAllText(junk, "not a scan");
+            var threw = false;
+            try { SavedScan.Load(junk); } catch (InvalidDataException) { threw = true; }
+            Check(threw, "rubbish is refused");
+        }
+
+        private static void DeepResume()
+        {
+            var path = Path.Combine(_temp, "raw.img");
+            if (!File.Exists(path)) DeepScanFindsFiles();
+            List<FoundFile> all;
+            using (var deep = new DeepVolume(new ImageDevice(path), null)) all = QuickScan.RunToEnd(deep);
+            var middle = new FileInfo(path).Length / 2 / 512 * 512;
+            var before = all.Where(f => f.Offset < middle).ToList();
+            using (var deep = new DeepVolume(new ImageDevice(path), null))
+            {
+                deep.Seed(before);
+                deep.ResumeAt = middle;
+                var scan = new QuickScan(deep, string.Empty);
+                foreach (var f in before) scan.Add(f);
+                scan.Run();
+                var combined = scan.Files;
+                Equal(all.Count, combined.Count, "same files as one full scan");
+                Check(combined.Select(f => f.Offset).Distinct().Count() == combined.Count, "nothing listed twice");
+                Check(combined.Select(f => f.Name).Distinct().Count() == combined.Count, "names carry on numbering");
+                Check(deep.Finished && scan.Done == scan.Total, "finished, all searched");
+            }
+        }
+
+        private static void SnapshotCompare()
+        {
+            var snap = Path.Combine(_temp, "snap");
+            var live = Path.Combine(_temp, "live");
+            void Put(string root, string rel, string text, DateTime when)
+            {
+                var p = Path.Combine(root, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(p));
+                File.WriteAllText(p, text);
+                File.SetLastWriteTimeUtc(p, when);
+            }
+            var t = new DateTime(2026, 5, 1, 10, 0, 0, DateTimeKind.Utc);
+            Put(snap, Path.Combine("Documents", "gone.docx"), "deleted since", t);
+            Put(snap, Path.Combine("Documents", "budget.xlsx"), "old numbers", t);
+            Put(live, Path.Combine("Documents", "budget.xlsx"), "new numbers, longer", t.AddDays(3));
+            Put(snap, "same.txt", "unchanged", t);
+            Put(live, "same.txt", "unchanged", t);
+            Put(snap, Path.Combine("Windows", "system.dll"), "skipped", t);
+            List<FoundFile> found;
+            using (var v = new SnapshotVolume(snap, live, t)) found = QuickScan.RunToEnd(v);
+            Check(found.Any(f => f.Name == "gone.docx" && f.Folder == "Documents" && f.Note.StartsWith("Deleted")), "deleted file found");
+            Check(found.Any(f => f.Name == "budget.xlsx" && f.Note.StartsWith("An older version")), "older version found");
+            Check(!found.Any(f => f.Name == "same.txt"), "unchanged files aren't listed");
+            Check(!found.Any(f => f.Name == "system.dll"), "Windows folder skipped");
+            var dest = Path.Combine(_temp, "from-snapshot");
+            Recovery.Run(null, found, new RecoverOptions { Destination = dest });
+            Equal("old numbers", File.ReadAllText(Path.Combine(dest, "Documents", "budget.xlsx")), "old version copied from the snapshot");
         }
     }
 }

@@ -77,6 +77,13 @@ namespace Kudurescue.Core
             set => SetBool("KeepFolders", value);
         }
 
+        /// <summary>"Recover deleted files with KUDURESCUE" on drives' right-click menu. Turned on by the installer when chosen.</summary>
+        public static bool ShellMenu
+        {
+            get => GetBool("ShellMenu", false);
+            set => SetBool("ShellMenu", value);
+        }
+
         public static bool RecoverPartial
         {
             get => GetBool("RecoverPartial", true);

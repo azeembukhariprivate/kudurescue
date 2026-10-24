@@ -15,7 +15,7 @@ using Kudurescue.Core;
 namespace Kudurescue.Views
 {
     /// <summary>The main window: four steps (choose a drive, scan, pick files, recover) in one window.</summary>
-    public sealed class MainWindow : Window
+    public sealed partial class MainWindow : Window
     {
         private static readonly string[] StepNames = { "Choose a drive", "Scan", "Pick files", "Recover" };
 
@@ -51,13 +51,14 @@ namespace Kudurescue.Views
             root.RowDefinitions.Add(new RowDefinition());
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            var header = Ui.Columns(Ui.Auto, Ui.Star(), Ui.Auto, Ui.Auto, Ui.Auto);
+            var header = Ui.Columns(Ui.Auto, Ui.Star(), Ui.Auto, Ui.Auto, Ui.Auto, Ui.Auto);
             header.Margin = new Thickness(16, 10, 12, 10);
             header.Children.Add(_steps.At(0, 0));
             _update.Visibility = Visibility.Collapsed;
             header.Children.Add(_update.Margin(0, 0, 14, 0).At(0, 2));
-            header.Children.Add(Ui.Button("Settings", "IconSettings", "GhostButton", (s, e) => new SettingsWindow(this).ShowDialog()).At(0, 3));
-            header.Children.Add(Ui.Button("About", "IconInfo", "GhostButton", (s, e) => About.Show(this)).At(0, 4));
+            header.Children.Add(Ui.Button("Open saved scan", "IconFolder", "GhostButton", (s, e) => PickSavedScan()).At(0, 3));
+            header.Children.Add(Ui.Button("Settings", "IconSettings", "GhostButton", (s, e) => new SettingsWindow(this).ShowDialog()).At(0, 4));
+            header.Children.Add(Ui.Button("About", "IconInfo", "GhostButton", (s, e) => About.Show(this)).At(0, 5));
             root.Children.Add(new Border { Child = header, BorderThickness = new Thickness(0, 0, 0, 1) }
                 .Res(Border.BackgroundProperty, "SurfaceBg").Res(Border.BorderBrushProperty, "BorderBrush").At(0));
 
@@ -81,7 +82,11 @@ namespace Kudurescue.Views
                 _results?.Cancel();
                 _scan?.Stop();
             };
-            Closed += (s, e) => _scan?.Volume.Dispose();
+            Closed += (s, e) =>
+            {
+                _scan?.Volume?.Dispose();
+                _results?.Volume?.Dispose();
+            };
         }
 
         public int Step => _step;
@@ -168,15 +173,19 @@ namespace Kudurescue.Views
             foreach (var d in _drives) list.Children.Add(DriveCard(d));
             if (_drives.Count == 0) list.Children.Add(Ui.Subtle("No drives were found.", 13));
 
+            var images = Ui.Row(
+                Ui.Button("Open a drive image…", "IconFile", click: (s, e) => OpenImage()),
+                Ui.Button("Copy a failing drive first…", "IconDrive", "GhostButton", (s, e) => CopyDrive()).Margin(8, 0, 0, 0));
             var left = Ui.Card(Ui.Column(
                 Ui.Text("Where were the files?", 18, bold: true),
                 Ui.Subtle("Choose the drive the files were deleted from. KUDURESCUE only reads it; nothing on it is changed.", 12.5).Margin(0, 3, 0, 14),
-                list), 18);
+                list, images.Margin(0, 6, 0, 0)), 18);
 
             var bin = new StackPanel();
-            var easy = Ui.Card(Ui.Column(Ui.Heading("Check this first"),
-                Ui.Subtle("Files in the Recycle Bin come back perfectly, with no scan.", 12.5).Margin(0, 3, 0, 12), bin), 18);
+            var easy = Ui.Card(Ui.Column(Ui.Heading("Check these first"),
+                Ui.Subtle("Files here come back perfectly, with no scan.", 12.5).Margin(0, 3, 0, 12), bin), 18);
             FillRecycleBin(bin);
+            FillSnapshots(bin);
 
             var canQuick = _drive != null && _drive.Size > 0 && (_drive.IsNtfs || _drive.IsFat);
             if (!canQuick && _drive != null) _deep = true;
@@ -345,8 +354,17 @@ namespace Kudurescue.Views
                 Dialogs.Error(this, $"{letter} can't be scanned:\n\n{ex.Message}");
                 return;
             }
+            if (device == null) _source = new ScanSource { Drive = letter };
+            BeginScanWith(volume, letter, null);
+        }
 
+        /// <summary>Starts scanning an opened volume; <paramref name="preload"/> holds files found before (when a saved Deep scan carries on).</summary>
+        internal void BeginScanWith(IVolume volume, string letter, IEnumerable<FoundFile> preload)
+        {
+            _timer?.Stop();
+            if (_scan != null && _scan.Volume != volume) _scan.Volume.Dispose();
             _scan = new QuickScan(volume, letter);
+            if (preload != null) foreach (var f in preload) _scan.Add(f);
             SetStep(1);
             ShowScanPage();
             _ = _scan.RunAsync();
@@ -429,7 +447,10 @@ namespace Kudurescue.Views
                 if (_scan.State == ScanState.Paused) _scan.Resume(); else _scan.Pause();
             });
             var stop = Ui.Button("Stop and show files", "IconStop", click: (s, e) => _scan.Stop());
-            SetFooter(Ui.Subtle("You can stop at any time to look at what's been found so far.", 12.5, false), _pause, stop);
+            if (_scan.Volume is DeepVolume)
+                SetFooter(Ui.Subtle("You can stop at any time, or save the scan and carry on another time.", 12.5, false),
+                    Ui.Button("Save scan…", "IconSave", click: (s, e) => SaveCurrentScan()), _pause, stop);
+            else SetFooter(Ui.Subtle("You can stop at any time to look at what's been found so far.", 12.5, false), _pause, stop);
             UpdateScan();
         }
 
@@ -520,6 +541,14 @@ namespace Kudurescue.Views
             var drive = _drive?.Letter ?? _scan?.Drive ?? "C:";
             if (_scan != null && volume == _scan.Volume) drive = _scan.Drive;
             _results = new ResultsView(this, files, volume, drive, title, recycleBin);
+            if (volume is DeepVolume dv && !dv.Finished && _scan != null && _scan.Volume == dv)
+            {
+                _results.Resume = () =>
+                {
+                    dv.ResumeAt = dv.Position;
+                    BeginScanWith(dv, _scan.Drive, _results.Files);
+                };
+            }
             ShowResultsPage();
         }
 

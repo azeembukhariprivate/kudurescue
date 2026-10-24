@@ -3,7 +3,7 @@
 ; (Scanning a drive does: KUDURESCUE asks Windows for them when a scan starts.)
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.0"
+  #define MyAppVersion "1.3.0"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\out\KUDURESCUE"
@@ -46,6 +46,7 @@ WelcomeLabel2=This will install [name/ver] on your computer.%n%nTip: if you're r
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
+Name: "contextmenu"; Description: "Add ""Recover deleted files with KUDURESCUE"" to drives' right-click menu"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "self-test.log"
@@ -55,7 +56,11 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\{#MyAppExe}"; Parameters: "--register-shell"; Tasks: contextmenu; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExe}"; Description: "Open KUDURESCUE now"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{app}\{#MyAppExe}"; Parameters: "--unregister"; Flags: runhidden waituntilterminated; RunOnceId: "KUDURESCUEUnregister"
 
 [Registry]
 ; Remove saved settings when uninstalling.
