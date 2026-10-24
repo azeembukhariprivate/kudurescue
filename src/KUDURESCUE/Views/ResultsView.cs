@@ -53,7 +53,7 @@ namespace Kudurescue.Views
 
         private readonly MainWindow _main;
         private readonly List<FoundFile> _files;
-        private readonly NtfsVolume _volume;
+        private readonly IVolume _volume;
         private readonly string _drive;
         private readonly string _title;
         private readonly bool _recycleBin;
@@ -83,7 +83,7 @@ namespace Kudurescue.Views
         private Button _recoverButton;
         private CancellationTokenSource _cancel;
 
-        public ResultsView(MainWindow main, List<FoundFile> files, NtfsVolume volume, string drive, string title, bool recycleBin)
+        public ResultsView(MainWindow main, List<FoundFile> files, IVolume volume, string drive, string title, bool recycleBin)
         {
             _main = main;
             _files = files;
@@ -318,12 +318,12 @@ namespace Kudurescue.Views
             }
             _chanceChips.Children.Clear();
             Chip(_chanceChips, "Any chance", _files.Count, _chance == null, () => _chance = null);
-            foreach (var c in new[] { Chance.Excellent, Chance.Partial, Chance.Overwritten, Chance.Unrecoverable })
+            foreach (var c in new[] { Chance.Excellent, Chance.Unsure, Chance.Partial, Chance.Overwritten, Chance.Unrecoverable })
             {
                 var n = _files.Count(f => f.Chance == c);
                 if (n == 0) continue;
                 var chance = c;
-                Chip(_chanceChips, c == Chance.Unrecoverable ? "Encrypted" : c.ToString(), n, _chance == c, () => _chance = chance);
+                Chip(_chanceChips, c == Chance.Unrecoverable ? "Encrypted" : c == Chance.Unsure ? "Probably" : c.ToString(), n, _chance == c, () => _chance = chance);
             }
         }
 
@@ -387,10 +387,11 @@ namespace Kudurescue.Views
                 Ui.Text(f.Name, 13.5, bold: true, wrap: true).Margin(0, 12, 0, 0),
                 Ui.Subtle(string.Join(" · ", details), 12).Margin(0, 2, 0, 8),
                 Ui.Banner(f.Chance == Chance.Excellent ? "IconCheck" : "IconWarn", Ui.Text(FileKinds.ChanceExplained(f), 12, wrap: true),
-                    f.Chance == Chance.Excellent ? "OkBg" : f.Chance == Chance.Partial ? "WarnBg" : "BadBg",
-                    f.Chance == Chance.Excellent ? "OkText" : f.Chance == Chance.Partial ? "WarnText" : "BadText"),
+                    f.Chance == Chance.Excellent ? "OkBg" : f.Chance == Chance.Partial || f.Chance == Chance.Unsure ? "WarnBg" : "BadBg",
+                    f.Chance == Chance.Excellent ? "OkText" : f.Chance == Chance.Partial || f.Chance == Chance.Unsure ? "WarnText" : "BadText"),
                 Ui.Mono("Was in " + _drive + "\\" + f.Folder, 11.5, "SubtleText").Margin(0, 10, 0, 0));
             ((TextBlock)info.Children[info.Children.Count - 1]).TextWrapping = TextWrapping.Wrap;
+            if (!string.IsNullOrEmpty(f.Note)) info.Children.Add(Ui.Subtle(f.Note, 12).Margin(0, 8, 0, 0));
             if (f.Source == FoundSource.RecycleBin && f.Deleted > DateTime.MinValue)
                 info.Children.Add(Ui.Subtle("Deleted " + f.Deleted.ToLocalTime().ToString("d MMM yyyy, HH:mm"), 12).Margin(0, 4, 0, 0));
             _preview.Content = info;
@@ -507,7 +508,7 @@ namespace Kudurescue.Views
         }
 
         private List<FoundFile> ToRecover() =>
-            _files.Where(f => f.IsChecked && (f.Chance == Chance.Excellent || (f.Chance == Chance.Partial && _partial.IsChecked == true))).ToList();
+            _files.Where(f => f.IsChecked && (f.Chance == Chance.Excellent || f.Chance == Chance.Unsure || (f.Chance == Chance.Partial && _partial.IsChecked == true))).ToList();
 
         /// <summary>Checks the destination: it must be on another drive, with enough space.</summary>
         private string Validate()

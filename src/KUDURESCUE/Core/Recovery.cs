@@ -34,7 +34,7 @@ namespace Kudurescue.Core
     public static class Recovery
     {
         /// <summary>Recovers files one after another. <paramref name="progress"/> gets the file being recovered and the bytes done so far.</summary>
-        public static RecoverResult Run(NtfsVolume volume, IList<FoundFile> files, RecoverOptions options,
+        public static RecoverResult Run(IVolume volume, IList<FoundFile> files, RecoverOptions options,
             Action<FoundFile, long> progress = null, CancellationToken cancel = default(CancellationToken))
         {
             var result = new RecoverResult();
@@ -130,7 +130,7 @@ namespace Kudurescue.Core
         }
 
         /// <summary>Reads the start of a file, for previews. Returns null when there's nothing to show.</summary>
-        public static byte[] ReadStart(NtfsVolume volume, FoundFile f, int max)
+        public static byte[] ReadStart(IVolume volume, FoundFile f, int max)
         {
             if (f.Chance == Chance.Unrecoverable) return null;
             try
@@ -159,7 +159,7 @@ namespace Kudurescue.Core
         }
 
         /// <summary>Writes a file's data from the drive into <paramref name="output"/>. Returns the number of unreadable sectors (written as zeros).</summary>
-        public static int Write(NtfsVolume volume, FoundFile f, Stream output, Action<long> progress, CancellationToken cancel, long limit = long.MaxValue)
+        public static int Write(IVolume volume, FoundFile f, Stream output, Action<long> progress, CancellationToken cancel, long limit = long.MaxValue)
         {
             var total = Math.Min(f.Size, limit);
             if (f.ResidentData != null)
@@ -171,7 +171,7 @@ namespace Kudurescue.Core
             return f.Compressed ? WriteCompressed(volume, f, output, total, progress, cancel) : WritePlain(volume, f, output, total, progress, cancel);
         }
 
-        private static int WritePlain(NtfsVolume volume, FoundFile f, Stream output, long total, Action<long> progress, CancellationToken cancel)
+        private static int WritePlain(IVolume volume, FoundFile f, Stream output, long total, Action<long> progress, CancellationToken cancel)
         {
             var cluster = volume.ClusterSize;
             var buffer = new byte[1 << 20];
@@ -194,7 +194,7 @@ namespace Kudurescue.Core
                     }
                     else
                     {
-                        var offset = run.Lcn * cluster + done;
+                        var offset = volume.ClusterOffset(run.Lcn) + done;
                         if (offset + n > volume.Device.Length) throw new InvalidDataException("Part of the file lies past the end of the drive.");
                         bad += SafeRead.Read(volume.Device, offset, buffer, 0, n);
                         if (position + n > initialized) Array.Clear(buffer, (int)(initialized - position), (int)(position + n - initialized));
@@ -209,7 +209,7 @@ namespace Kudurescue.Core
             return bad;
         }
 
-        private static int WriteCompressed(NtfsVolume volume, FoundFile f, Stream output, long total, Action<long> progress, CancellationToken cancel)
+        private static int WriteCompressed(IVolume volume, FoundFile f, Stream output, long total, Action<long> progress, CancellationToken cancel)
         {
             var cluster = volume.ClusterSize;
             var unitClusters = 1L << f.CompressionUnit;
@@ -236,7 +236,7 @@ namespace Kudurescue.Core
                     foreach (var p in pieces.Where(p => p.Lcn >= 0))
                     {
                         var n = (int)(p.Length * cluster);
-                        bad += SafeRead.Read(volume.Device, p.Lcn * cluster, raw, pos, n);
+                        bad += SafeRead.Read(volume.Device, volume.ClusterOffset(p.Lcn), raw, pos, n);
                         pos += n;
                     }
                     // A unit that fills all its clusters is stored as-is; a shorter one is compressed.

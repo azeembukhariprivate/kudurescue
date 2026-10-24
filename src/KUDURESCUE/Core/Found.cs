@@ -6,7 +6,8 @@ using System.IO;
 namespace Kudurescue.Core
 {
     /// <summary>How much of a deleted file is still on the drive.</summary>
-    public enum Chance { Excellent, Partial, Overwritten, Unrecoverable }
+    /// <summary>How much of a deleted file is still on the drive. Unsure: still there, but where it starts had to be worked out.</summary>
+    public enum Chance { Excellent, Unsure, Partial, Overwritten, Unrecoverable }
 
     public enum FileKind { Photos, Videos, Documents, Music, Archives, Email, Design, Data, Programs, Other }
 
@@ -33,6 +34,9 @@ namespace Kudurescue.Core
         public int GoodPercent { get; set; } = 100;
 
         public FileKind Kind { get; set; }
+
+        /// <summary>Something worth knowing about this file, shown in the preview (e.g. how its location was found).</summary>
+        public string Note { get; set; }
 
         // Found in the drive's index (MFT).
         public long Record { get; set; } = -1;
@@ -63,8 +67,8 @@ namespace Kudurescue.Core
         public string ModifiedText => Modified > new DateTime(1980, 1, 1) ? Modified.ToLocalTime().ToString("d MMM yyyy") : string.Empty;
         public string ChanceText => FileKinds.ChanceLabel(Chance, GoodPercent);
         public string FolderText => Folder.Length == 0 ? "\\" : Folder;
-        public string Tone => Chance == Chance.Excellent ? "ok" : Chance == Chance.Partial ? "warn" : "bad";
-        public bool CanRecover => Chance == Chance.Excellent || Chance == Chance.Partial;
+        public string Tone => Chance == Chance.Excellent ? "ok" : Chance == Chance.Partial || Chance == Chance.Unsure ? "warn" : "bad";
+        public bool CanRecover => Chance == Chance.Excellent || Chance == Chance.Unsure || Chance == Chance.Partial;
 
         public string Extension => Path.GetExtension(Name ?? string.Empty).ToLowerInvariant();
         public string RelativePath => Folder.Length == 0 ? Name : Folder + "\\" + Name;
@@ -117,6 +121,7 @@ namespace Kudurescue.Core
             switch (chance)
             {
                 case Chance.Excellent: return "Excellent";
+                case Chance.Unsure: return "Probably";
                 case Chance.Partial: return $"Partial · {goodPercent}%";
                 case Chance.Overwritten: return "Overwritten";
                 default: return "Encrypted";
@@ -128,6 +133,7 @@ namespace Kudurescue.Core
             switch (f.Chance)
             {
                 case Chance.Excellent: return f.Source == FoundSource.RecycleBin ? "Excellent: it's still in the Recycle Bin" : "Excellent: every part is still on the drive";
+                case Chance.Unsure: return "Probably: its data is free on the drive, but where it starts had to be worked out. Check the file after recovering it";
                 case Chance.Partial: return $"Partial: {f.GoodPercent}% is still on the drive; the rest has been reused by other files";
                 case Chance.Overwritten: return "Overwritten: other files now use this space";
                 default: return "Encrypted by Windows (EFS): it can't be recovered without the original user's key";

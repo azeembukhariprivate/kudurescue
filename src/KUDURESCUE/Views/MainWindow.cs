@@ -162,7 +162,7 @@ namespace Kudurescue.Views
             SetStep(0);
             _drives = Drives.List();
             var selected = _drive == null ? null : _drives.FirstOrDefault(d => d.Letter == _drive.Letter);
-            _drive = selected ?? _drives.FirstOrDefault(d => d.IsNtfs && !d.IsSystem && !d.TrimWarning) ?? _drives.FirstOrDefault(d => d.IsNtfs) ?? _drives.FirstOrDefault();
+            _drive = selected ?? _drives.FirstOrDefault(d => (d.IsNtfs || d.IsFat) && !d.IsSystem && !d.TrimWarning) ?? _drives.FirstOrDefault(d => d.IsNtfs) ?? _drives.FirstOrDefault();
 
             var list = new StackPanel();
             foreach (var d in _drives) list.Children.Add(DriveCard(d));
@@ -233,9 +233,8 @@ namespace Kudurescue.Views
         {
             if (d.Size <= 0) { yield return Ui.Chip(d.Format ?? "Not ready", Tone.Bad); yield break; }
             if (d.TrimWarning) yield return Ui.Chip("SSD with TRIM: deleted files are usually wiped within minutes", Tone.Warn, "IconWarn");
-            else if (d.IsNtfs) yield return Ui.Chip("Good chance", Tone.Ok);
-            if (d.IsFat) yield return Ui.Chip($"{d.Format} support is coming in version 1.1", Tone.Neutral);
-            else if (!d.IsNtfs) yield return Ui.Chip($"{d.Format} drives aren't supported", Tone.Neutral);
+            else if (d.IsNtfs || d.IsFat) yield return Ui.Chip("Good chance", Tone.Ok);
+            if (!d.IsNtfs && !d.IsFat) yield return Ui.Chip($"{d.Format} drives aren't supported", Tone.Neutral);
             if (d.IsSystem) yield return Ui.Chip("Windows drive: use the PC as little as possible", Tone.Neutral);
         }
 
@@ -288,8 +287,7 @@ namespace Kudurescue.Views
         {
             if (d == null) return "Choose a drive first.";
             if (d.Size <= 0) return "This drive isn't ready. If it's locked with BitLocker, unlock it in File Explorer first.";
-            if (d.IsFat) return $"{d.Format} drives (memory cards and most USB sticks) are supported from version 1.1.";
-            if (!d.IsNtfs) return $"{d.Format} drives aren't supported.";
+            if (!d.IsNtfs && !d.IsFat) return $"{d.Format} drives aren't supported.";
             return null;
         }
 
@@ -323,10 +321,10 @@ namespace Kudurescue.Views
         /// <summary>Opens the drive and starts a Quick scan. Also used by the self-test.</summary>
         public void BeginScan(string letter, IBlockDevice device = null)
         {
-            NtfsVolume volume;
+            IVolume volume;
             try
             {
-                volume = NtfsVolume.Open(device ?? VolumeDevice.Open(letter));
+                volume = Volumes.Open(device ?? VolumeDevice.Open(letter));
             }
             catch (Exception ex) when (ex is IOException || ex is InvalidDataException || ex is UnauthorizedAccessException)
             {
@@ -361,7 +359,8 @@ namespace Kudurescue.Views
             _justFound = new StackPanel();
 
             var head = Ui.Columns(Ui.Star(), Ui.Auto);
-            head.Children.Add(Ui.Column(_scanTitle, Ui.Subtle($"Quick scan · reading the drive's file index · nothing is written to {_scan.Drive}", 12.5).Margin(0, 3, 0, 0)).At(0, 0));
+            var reading = _scan.Volume is NtfsVolume ? "reading the drive's file index" : "reading the drive's folders";
+            head.Children.Add(Ui.Column(_scanTitle, Ui.Subtle($"Quick scan of {_scan.Volume.FormatName} · {reading} · nothing is written to {_scan.Drive}", 12.5).Margin(0, 3, 0, 0)).At(0, 0));
             head.Children.Add(_percent.At(0, 1));
 
             var times = Ui.Row(_elapsed, _left.Margin(24, 0, 0, 0), _records.Margin(24, 0, 0, 0));
@@ -413,8 +412,8 @@ namespace Kudurescue.Views
             }
             else if (_scan.State == ScanState.Paused) _left.Inlines.Add(new Run("Paused") { FontWeight = FontWeights.SemiBold });
             _records.Inlines.Clear();
-            _records.Inlines.Add(new Run("Index entries ") { Foreground = Ui.Brush("SubtleText") });
-            _records.Inlines.Add(new Run($"{_scan.RecordsDone:N0} of {_scan.RecordsTotal:N0}") { FontWeight = FontWeights.SemiBold });
+            _records.Inlines.Add(new Run(_scan.ProgressLabel + " ") { Foreground = Ui.Brush("SubtleText") });
+            _records.Inlines.Add(new Run($"{_scan.Done:N0} of {_scan.Total:N0}") { FontWeight = FontWeights.SemiBold });
             _pause.Content = Ui.Label(_scan.State == ScanState.Paused ? "IconPlay" : "IconPause", _scan.State == ScanState.Paused ? "Resume" : "Pause");
 
             var files = _scan.Files;
@@ -432,7 +431,7 @@ namespace Kudurescue.Views
                 _kinds.Children.Add(row);
             }
 
-            int excellent = files.Count(f => f.Chance == Chance.Excellent), partial = files.Count(f => f.Chance == Chance.Partial);
+            int excellent = files.Count(f => f.Chance == Chance.Excellent), partial = files.Count(f => f.Chance == Chance.Partial || f.Chance == Chance.Unsure);
             var lost = files.Count - excellent - partial;
             _chanceBar.ColumnDefinitions.Clear();
             _chanceBar.Children.Clear();
@@ -442,7 +441,7 @@ namespace Kudurescue.Views
                 _chanceBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(parts[i].Item1, files.Count == 0 && i == 0 ? 1 : 0), GridUnitType.Star) });
                 _chanceBar.Children.Add(new Border().Res(Border.BackgroundProperty, files.Count == 0 ? "NeutralChipBg" : parts[i].Item2).At(0, i));
             }
-            _chanceLine.Text = $"Excellent {excellent:N0}   ·   Partial {partial:N0}   ·   Overwritten {lost:N0}";
+            _chanceLine.Text = $"Excellent {excellent:N0}   ·   Partial or probably {partial:N0}   ·   Overwritten {lost:N0}";
 
             _justFound.Children.Clear();
             foreach (var f in _scan.Recent.Take(8))
@@ -472,13 +471,13 @@ namespace Kudurescue.Views
 
         internal static Border ChanceChip(FoundFile f)
         {
-            var tone = f.Chance == Chance.Excellent ? Tone.Ok : f.Chance == Chance.Partial ? Tone.Warn : Tone.Bad;
+            var tone = f.Chance == Chance.Excellent ? Tone.Ok : f.Chance == Chance.Partial || f.Chance == Chance.Unsure ? Tone.Warn : Tone.Bad;
             return Ui.Chip(f.ChanceText, tone);
         }
 
         // ================================================================== 3 and 4. pick files, recover
 
-        internal void ShowResults(List<FoundFile> files, NtfsVolume volume, string title, bool recycleBin)
+        internal void ShowResults(List<FoundFile> files, IVolume volume, string title, bool recycleBin)
         {
             var drive = _drive?.Letter ?? _scan?.Drive ?? "C:";
             if (_scan != null && volume == _scan.Volume) drive = _scan.Drive;

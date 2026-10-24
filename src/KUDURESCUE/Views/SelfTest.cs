@@ -41,6 +41,8 @@ namespace Kudurescue.Views
             Step("Write files, then delete them", WriteAndDelete);
             Step("Quick scan finds the deleted files", ScanFindsFiles);
             Step("Recover files byte for byte", RecoverFiles);
+            Step("FAT32 drive: delete, find and recover files", () => OtherFormat("fat32"));
+            Step("exFAT drive: delete, find and recover files", () => OtherFormat("exfat"));
 
             Step("Load themes and styles", () => ThemeManager.Init(ThemeMode.Light));
             Step("Theme keys exist", () =>
@@ -139,6 +141,81 @@ namespace Kudurescue.Views
             while (!Directory.Exists(_drive + "\\") && DateTime.UtcNow < until) Thread.Sleep(250);
             Expect(Directory.Exists(_drive + "\\"), $"drive {_drive} to appear");
             _log.AppendLine($"      test drive {_drive} ({new DriveInfo(_drive).DriveFormat})");
+        }
+
+        /// <summary>The same round trip on a FAT32 or exFAT virtual drive, on its own drive letter.</summary>
+        private static void OtherFormat(string fs)
+        {
+            var used = new HashSet<char>(DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])));
+            var letter = "RSTUVWXYZQPONMLKJ".First(c => !used.Contains(c));
+            var drive = letter + ":";
+            var vhd = Path.Combine(_temp, "kudurescue-" + fs + ".vhdx");
+            Diskpart($"create vdisk file=\"{vhd}\" maximum=200 type=expandable", $"select vdisk file=\"{vhd}\"", "attach vdisk",
+                "create partition primary", $"format fs={fs} quick label=KR{fs.ToUpperInvariant()}", $"assign letter={letter}");
+            try
+            {
+                var until = DateTime.UtcNow.AddSeconds(30);
+                while (!Directory.Exists(drive + "\\") && DateTime.UtcNow < until) Thread.Sleep(250);
+                Expect(Directory.Exists(drive + "\\"), $"drive {drive} to appear");
+
+                var expected = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+                void Write(string relative, byte[] data)
+                {
+                    var path = Path.Combine(drive + "\\", relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(path));
+                    File.WriteAllBytes(path, data);
+                    expected[relative] = data;
+                }
+                var jpeg = Pattern(250_000, 31);
+                jpeg[0] = 0xFF; jpeg[1] = 0xD8; jpeg[2] = 0xFF;
+                Write(@"DCIM\100CAMERA\IMG_0001.JPG", jpeg);
+                Write(@"Holiday photos from Goa 2026.jpg", jpeg.Take(120_000).ToArray());
+                Write(@"note.txt", Encoding.UTF8.GetBytes("a short note"));
+                Write(@"Ünïcødé ファイル.txt", Pattern(3_000, 32));
+                Write(@"Video\clip.mp4", Pattern(4_000_000, 33));
+                Write(@"Old folder\report.pdf", Pattern(60_000, 34));
+
+                FlushDrive(drive);
+                foreach (var relative in expected.Keys) File.Delete(Path.Combine(drive + "\\", relative));
+                Directory.Delete(Path.Combine(drive + "\\", "Old folder"), true);
+                FlushDrive(drive);
+
+                List<FoundFile> found;
+                RecoverResult result;
+                var dest = Path.Combine(_temp, "recovered-" + fs);
+                using (var volume = Volumes.Open(VolumeDevice.Open(drive)))
+                {
+                    _log.AppendLine($"      {fs} drive {drive}: {volume.FormatName}, {volume.ClusterSize} byte clusters");
+                    found = QuickScan.RunToEnd(volume, drive);
+                    var wanted = found.Where(f => expected.ContainsKey(f.RelativePath)).ToList();
+                    foreach (var f in wanted) _log.AppendLine($"      {f.RelativePath}: {f.Chance}{(f.Note != null ? " (" + f.Note + ")" : string.Empty)}");
+                    foreach (var relative in expected.Keys)
+                    {
+                        var f = wanted.FirstOrDefault(x => x.RelativePath.Equals(relative, StringComparison.OrdinalIgnoreCase));
+                        Expect(f != null, relative + " found (found: " + string.Join(", ", found.Select(x => x.RelativePath).Take(30)) + ")");
+                        Expect(f.Size == expected[relative].Length, $"{relative} size");
+                        Expect(f.Chance == Chance.Excellent || f.Chance == Chance.Unsure, $"{relative} still there, got {f.Chance}");
+                    }
+                    result = Recovery.Run(volume, wanted, new RecoverOptions { Destination = dest });
+                }
+                Expect(result.Problems.Count == 0, "no problems: " + string.Join("; ", result.Problems.Select(p => p.File + ": " + p.Reason)));
+                foreach (var pair in expected)
+                    Expect(File.ReadAllBytes(Path.Combine(dest, pair.Key)).SequenceEqual(pair.Value), pair.Key + " identical");
+            }
+            finally
+            {
+                Diskpart($"select vdisk file=\"{vhd}\"", "detach vdisk");
+            }
+        }
+
+        private static void FlushDrive(string drive)
+        {
+            using (var handle = Native.CreateFile(@"\\.\" + drive, Native.GENERIC_READ | Native.GENERIC_WRITE,
+                       Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE, IntPtr.Zero, Native.OPEN_EXISTING, 0, IntPtr.Zero))
+            {
+                if (!handle.IsInvalid) Native.FlushFileBuffers(handle);
+            }
+            Thread.Sleep(1500);
         }
 
         private static void RemoveDrive()
@@ -246,7 +323,7 @@ namespace Kudurescue.Views
         private static void ScanFindsFiles()
         {
             var watch = Stopwatch.StartNew();
-            using (var volume = NtfsVolume.Open(VolumeDevice.Open(_drive)))
+            using (var volume = Volumes.Open(VolumeDevice.Open(_drive)))
                 _found = QuickScan.RunToEnd(volume, _drive);
             _log.AppendLine($"      {_found.Count} deleted files found in {watch.Elapsed.TotalSeconds:0.0}s");
             foreach (var relative in Expected.Keys)

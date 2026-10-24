@@ -7,7 +7,7 @@ using System.Threading;
 namespace Kudurescue.Core
 {
     /// <summary>An NTFS drive opened read-only: its MFT (the index of every file) and its map of used clusters.</summary>
-    public sealed class NtfsVolume : IDisposable
+    public sealed class NtfsVolume : IVolume
     {
         private readonly bool _ownsDevice;
 
@@ -24,7 +24,10 @@ namespace Kudurescue.Core
         public long MftSize { get; private set; }
         public ClusterBitmap Bitmap { get; private set; }
 
+        public string FormatName => "NTFS";
         public int ClusterSize => Boot.ClusterSize;
+        public long ClusterOffset(long cluster) => cluster * ClusterSize;
+        public void Scan(QuickScan scan, CancellationToken cancel) => new NtfsScanner(this, scan).Run(cancel);
         public int RecordSize => Boot.RecordSize;
         public long RecordCount => MftSize / RecordSize;
 

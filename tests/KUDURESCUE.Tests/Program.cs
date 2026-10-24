@@ -31,6 +31,9 @@ namespace Kudurescue.Tests
                 Run("Reads Recycle Bin entries", ReadsRecycleBin);
                 Run("Groups files by type", GroupsFiles);
                 Run("Counts used clusters", CountsClusters);
+                Run("FAT32: deleted files, names, folders, guessed clusters", Fat32);
+                Run("exFAT: deleted files, chains, folders", ExFat);
+                Run("Recognises file types", RecognisesTypes);
             }
             finally
             {
@@ -442,6 +445,146 @@ namespace Kudurescue.Tests
                 Equal(1L, bitmap.CountAllocated(301, 2), "partly used range");
                 Equal(5L, bitmap.CountAllocated(NtfsImage.Clusters - 3, 8), "past the end counts as used");
             }
+        }
+
+        private static void Fat32()
+        {
+            var img = new Fat32Image();
+            var photo = NtfsImage.Pattern(3000, 11); photo[0] = 0xFF; photo[1] = 0xD8; photo[2] = 0xFF;
+            img.Write(100, photo);
+            img.Entry(2, "HOLIDA~1JPG", "Holiday photo.jpg", 100, photo.Length, deleted: true);
+
+            img.Folder(50);
+            img.Use(50, 1);
+            img.Dots(50, 0);
+            img.Entry(2, "DCIM       ", null, 50, 0, deleted: false, isFolder: true);
+            var short1 = NtfsImage.Pattern(700, 12);
+            img.Write(200, short1);
+            img.Entry(50, "IMG_0002JPG", null, 200, short1.Length, deleted: true);
+            var unicode = NtfsImage.Pattern(900, 13);
+            img.Write(220, unicode);
+            img.Entry(50, "UNICOD~1TXT", "Ünïcødé ファイル.txt", 220, unicode.Length, deleted: true);
+
+            img.Folder(60);
+            img.Dots(60, 0);
+            img.FreeFolder(60);
+            img.Entry(2, "OLD        ", "Old", 60, 0, deleted: true, isFolder: true);
+            var report = NtfsImage.Pattern(1500, 14);
+            img.Write(300, report);
+            img.Entry(60, "REPORT  PDF", "report.pdf", 300, report.Length, deleted: true);
+
+            img.Use(400, 2);
+            img.Use(0x10000 + 400, 2); // both places it could have started are in use now
+            img.Entry(2, "OVERWR~1BIN", "overwritten.bin", 400, 1024, deleted: true);
+            img.Entry(2, "NEW     DAT", null, 400, 1024, deleted: false);
+            img.Entry(2, "KEEP    TXT", "keep.txt", 410, 10, deleted: false);
+            img.Use(410, 1);
+
+            // Top half of the first cluster cleared: only one place fits (the low one is in use)…
+            var big = NtfsImage.Pattern(2000, 15); Encoding.ASCII.GetBytes("ftyp").CopyTo(big, 4);
+            img.Write(0x10000 + 500, big);
+            img.Use(500, 4);
+            img.Entry(2, "BIG     MP4", "big.mp4", 0x10000 + 500, big.Length, deleted: true);
+            // …both places are free, and the data's signature decides…
+            var clip = NtfsImage.Pattern(1000, 16); Encoding.ASCII.GetBytes("ftyp").CopyTo(clip, 4);
+            img.Write(0x10000 + 700, clip);
+            img.Entry(2, "CLIP    MP4", "clip.mp4", 0x10000 + 700, clip.Length, deleted: true);
+            // …and with no way to tell, it's marked "probably".
+            img.Entry(2, "NOTES   TXT", "notes.txt", 0x10000 + 900, 100, deleted: true);
+
+            var path = img.Save(Path.Combine(_temp, "fat32.img"));
+            List<FoundFile> found;
+            var dest = Path.Combine(_temp, "fat32-recovered");
+            using (var volume = Volumes.Open(new ImageDevice(path)))
+            {
+                Equal("FAT32", volume.FormatName, "format");
+                found = QuickScan.RunToEnd(volume, "F:");
+                Recovery.Run(volume, found, new RecoverOptions { Destination = dest });
+            }
+            FoundFile F(string rel) => found.FirstOrDefault(f => f.RelativePath == rel) ?? throw new Exception(rel + " not found in " + string.Join(", ", found.Select(f => f.RelativePath)));
+
+            Equal(Chance.Excellent, F("Holiday photo.jpg").Chance, "long name rebuilt, free clusters");
+            Equal(Fat32Image.Modified.ToUniversalTime(), F("Holiday photo.jpg").Modified, "modified time");
+            Check(File.ReadAllBytes(Path.Combine(dest, "Holiday photo.jpg")).SequenceEqual(photo), "photo recovered");
+            Check(F(@"DCIM\_MG_0002.JPG").Note.Contains("first letter"), "short name without its first letter, explained");
+            Check(File.ReadAllBytes(Path.Combine(dest, "DCIM", "_MG_0002.JPG")).SequenceEqual(short1), "short-name file recovered");
+            Check(File.ReadAllBytes(Path.Combine(dest, "DCIM", "Ünïcødé ファイル.txt")).SequenceEqual(unicode), "unicode long name");
+            Check(File.ReadAllBytes(Path.Combine(dest, "Old", "report.pdf")).SequenceEqual(report), "file in a deleted folder");
+            Equal(Chance.Overwritten, F("overwritten.bin").Chance, "reused clusters");
+            Check(!found.Any(f => f.Name == "keep.txt" || f.Name == "NEW.DAT"), "live files aren't listed");
+            Equal(Chance.Excellent, F("big.mp4").Chance, "only one place fits, and it's confirmed");
+            Check(File.ReadAllBytes(Path.Combine(dest, "big.mp4")).SequenceEqual(big), "big.mp4 from the right place");
+            Check(File.ReadAllBytes(Path.Combine(dest, "clip.mp4")).SequenceEqual(clip), "signature picks the right place");
+            Equal(Chance.Unsure, F("notes.txt").Chance, "can't tell: probably");
+        }
+
+        private static void ExFat()
+        {
+            var img = new ExFatImage();
+            var video = NtfsImage.Pattern(10000, 21);
+            img.Write(10, video);
+            img.Set(4, "video.mp4", 10, video.Length, deleted: true, noFatChain: true);
+
+            var frag = NtfsImage.Pattern(3 * ExFatImage.Cluster, 22);
+            img.Write(20, frag.Take(8192).ToArray());
+            img.Write(30, frag.Skip(8192).ToArray());
+            img.Chain(20, 21, 30); // the FAT still holds the pieces
+            img.Set(4, "frag.bin", 20, frag.Length, deleted: true, noFatChain: false);
+
+            var lost = NtfsImage.Pattern(5000, 23);
+            img.Write(40, lost);
+            img.Set(4, "lostmap.doc", 40, lost.Length, deleted: true, noFatChain: false); // FAT entries cleared
+
+            img.Folder(50);
+            img.Set(4, "Trip", 50, ExFatImage.Cluster, deleted: true, noFatChain: true, isFolder: true);
+            var beach = NtfsImage.Pattern(4000, 24);
+            img.Write(60, beach);
+            img.Set(50, "beach.jpg", 60, beach.Length, deleted: true, noFatChain: true);
+
+            img.Folder(70);
+            img.Use(70, 1, true);
+            img.Set(4, "Docs", 70, ExFatImage.Cluster, deleted: false, noFatChain: false, isFolder: true);
+            var plan = Encoding.UTF8.GetBytes("the plan");
+            img.Write(80, plan);
+            img.Set(70, "plan.txt", 80, plan.Length, deleted: true, noFatChain: true);
+            img.Use(81, 1, false);
+            img.Set(70, "live.txt", 81, 10, deleted: false, noFatChain: true);
+
+            img.MarkUsed(90);
+            img.Set(4, "gone.bin", 90, 100, deleted: true, noFatChain: true);
+            var longName = NtfsImage.Pattern(100, 25);
+            img.Write(95, longName);
+            img.Set(4, "A rather long file name.txt", 95, longName.Length, deleted: true, noFatChain: true);
+
+            var path = img.Save(Path.Combine(_temp, "exfat.img"));
+            List<FoundFile> found;
+            var dest = Path.Combine(_temp, "exfat-recovered");
+            using (var volume = Volumes.Open(new ImageDevice(path)))
+            {
+                Equal("exFAT", volume.FormatName, "format");
+                found = QuickScan.RunToEnd(volume, "E:");
+                Recovery.Run(volume, found, new RecoverOptions { Destination = dest });
+            }
+            FoundFile F(string rel) => found.FirstOrDefault(f => f.RelativePath == rel) ?? throw new Exception(rel + " not found in " + string.Join(", ", found.Select(f => f.RelativePath)));
+
+            Equal(Chance.Excellent, F("video.mp4").Chance, "one-piece file");
+            Equal(ExFatImage.Modified, F("video.mp4").Modified, "UTC time");
+            Check(File.ReadAllBytes(Path.Combine(dest, "video.mp4")).SequenceEqual(video), "video recovered");
+            Check(File.ReadAllBytes(Path.Combine(dest, "frag.bin")).SequenceEqual(frag), "pieces followed through the FAT");
+            Check(F("lostmap.doc").Note != null, "missing chain explained");
+            Check(File.ReadAllBytes(Path.Combine(dest, "lostmap.doc")).SequenceEqual(lost), "read on from the start");
+            Check(File.ReadAllBytes(Path.Combine(dest, "Trip", "beach.jpg")).SequenceEqual(beach), "file in a deleted folder");
+            Equal("the plan", File.ReadAllText(Path.Combine(dest, "Docs", "plan.txt")), "file in a live folder");
+            Check(!found.Any(f => f.Name == "live.txt"), "live files aren't listed");
+            Equal(Chance.Overwritten, F("gone.bin").Chance, "reused clusters");
+            Check(File.ReadAllBytes(Path.Combine(dest, "A rather long file name.txt")).SequenceEqual(longName), "name over two entries");
+        }
+
+        private static void RecognisesTypes()
+        {
+            Equal(true, Signatures.Matches(".jpg", new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0 }), "jpeg");
+            Equal(false, Signatures.Matches(".pdf", new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0 }), "not a pdf");
+            Equal((bool?)null, Signatures.Matches(".xyz", new byte[8]), "unknown type");
         }
     }
 }
