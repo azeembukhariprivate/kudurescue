@@ -6,6 +6,12 @@
 
 <p align="center">Get deleted files back on Windows. Free, with no size limits.</p>
 
+<p align="center">
+  <a href="https://github.com/azeembukhariprivate/kudurescue/releases/latest/download/KUDURESCUE-setup.exe"><img src="https://img.shields.io/badge/Download-KUDURESCUE%20for%20Windows-2ea44f?style=for-the-badge" alt="Download KUDURESCUE for Windows"></a>
+  <br>
+  <sub>The installer for Windows 10 and 11, always the latest version · <a href="https://github.com/azeembukhariprivate/kudurescue/releases/latest">portable zip and what's new</a></sub>
+</p>
+
 ---
 
 ## Features
@@ -54,7 +60,7 @@ The sooner you scan, and the less you use the drive in the meantime, the better 
 
 ## Download
 
-Get the latest version from the [Releases](../../releases/latest) page:
+**[Download the installer](https://github.com/azeembukhariprivate/kudurescue/releases/latest/download/KUDURESCUE-setup.exe)** (`KUDURESCUE-setup.exe`, always the latest version), or get any of these from the [Releases page](https://github.com/azeembukhariprivate/kudurescue/releases/latest):
 
 - `KUDURESCUE-x.y.z-setup.exe` installs KUDURESCUE for your Windows account.
 - `KUDURESCUE-x.y.z-portable.zip` runs without installing: unzip it anywhere and open `KUDURESCUE.exe`.
