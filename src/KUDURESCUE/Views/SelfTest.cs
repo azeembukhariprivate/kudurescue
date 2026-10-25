@@ -91,8 +91,10 @@ namespace Kudurescue.Views
                 ThemeManager.Apply(ThemeMode.Dark);
                 main.ShowDrives();
                 Pump();
+                Screenshots.All("Dark theme");
                 main.ShowResultsPage();
                 Pump();
+                Screenshots.All("Dark theme");
                 ThemeManager.Apply(ThemeMode.Light);
                 Pump();
             });
@@ -120,6 +122,7 @@ namespace Kudurescue.Views
             {
                 action();
                 Pump();
+                Screenshots.All(name);
                 if (Errors.Count > before) throw new Exception(string.Join(" | ", Errors.Skip(before)));
                 _log.AppendLine($"ok    {name} ({(DateTime.UtcNow - started).TotalSeconds:0.0}s)");
             }
@@ -714,6 +717,7 @@ namespace Kudurescue.Views
             OffScreen(w);
             w.Show();
             Pump();
+            Screenshots.One(w, w.Title);
             w.Close();
         }
 
