@@ -1,3 +1,5 @@
+// Shared KUDU code: this file comes from kudu-common (https://github.com/azeembukhariprivate/kudu-common).
+// Change it there and run its sync script; the build fails when this copy differs from kudu-common.
 using System;
 using System.Diagnostics;
 using System.Reflection;
@@ -5,12 +7,14 @@ using System.Text.RegularExpressions;
 
 namespace Kudurescue.Core
 {
-    public static class AppInfo
+    /// <summary>
+    /// About the app. Its name and repository are in AppDetails.cs, which each app keeps for itself (with anything else
+    /// only it needs).
+    /// </summary>
+    public static partial class AppInfo
     {
-        public const string Name = "KUDURESCUE";
         public const string Author = "Azeem Bukhari";
         public const string RepoOwner = "azeembukhariprivate";
-        public const string RepoName = "kudurescue";
 
         public static string RepoUrl => $"https://github.com/{RepoOwner}/{RepoName}";
         public static string ReleasesUrl => RepoUrl + "/releases";

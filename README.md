@@ -89,6 +89,14 @@ out\KUDURESCUE\KUDURESCUE.exe --self-test
 
 The tests build small NTFS, FAT32 and exFAT drive images, disk images with MBR and GPT partition tables, and fixed and dynamic VHD files byte by byte (intact, overwritten, partly reused, fragmented, sparse, compressed, split and encrypted files, deleted long and short names, deleted folders, torn records and lost folders) and check the engine against them. `--self-test` needs administrator rights: it creates small virtual drives (VHD) formatted as NTFS, FAT32 and exFAT, writes files to them, deletes them, recovers them with the real engine and compares every byte, runs a Deep scan after deleting and again after formatting a drive, copies a drive to an image and recovers from the copy, opens real fixed and dynamic VHD files with partition tables, saves and reopens a scan, takes a real Previous Versions snapshot and recovers a file deleted after it, checks the Recycle Bin reader, opens every screen in both themes, writes `self-test.log` and exits. To build the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and compile `installer/KUDURESCUE.iss`.
 
+
+### Shared code
+
+Some files (the look, dialogs, the update check, administrator helpers) are shared by the KUDU apps and come from
+[kudu-common](https://github.com/azeembukhariprivate/kudu-common); each starts with a comment saying so, and `.kudu-common`
+lists them. You don't need kudu-common to build this app, but change those files there, not here: the build checks that
+they match.
+
 ## Publishing a new version
 
 1. Change `<Version>` in `src/KUDURESCUE/KUDURESCUE.csproj` (and `MyAppVersion` in `installer/KUDURESCUE.iss`).

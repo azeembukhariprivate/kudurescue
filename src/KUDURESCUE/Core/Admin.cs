@@ -1,3 +1,5 @@
+// Shared KUDU code: this file comes from kudu-common (https://github.com/azeembukhariprivate/kudu-common).
+// Change it there and run its sync script; the build fails when this copy differs from kudu-common.
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -30,7 +32,7 @@ namespace Kudurescue.Core
             }
         }
 
-        /// <summary>Starts a new copy of KUDURESCUE as administrator. Returns false if the user said no.</summary>
+        /// <summary>Starts a new copy of the app as administrator. Returns false if the user said no.</summary>
         public static bool RestartElevated(IEnumerable<string> args)
         {
             try

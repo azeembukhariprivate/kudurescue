@@ -1,3 +1,5 @@
+// Shared KUDU code: this file comes from kudu-common (https://github.com/azeembukhariprivate/kudu-common).
+// Change it there and run its sync script; the build fails when this copy differs from kudu-common.
 using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -5,10 +7,9 @@ using System.Runtime.InteropServices;
 namespace Kudurescue.Core
 {
     /// <summary>
-    /// Opens files and folders through File Explorer's desktop, so they run with normal rights even while this app runs
-    /// as administrator (it does, to read drives directly). Otherwise a recovered file opened from it, perhaps a damaged
-    /// or harmful one, would run as administrator too. This asks the desktop's own shell to open it, as Raymond Chen
-    /// describes in "How can I launch an unelevated process from my elevated process?".
+    /// Opens files and folders through File Explorer's desktop, so they run with normal rights even while the app runs
+    /// as administrator. Otherwise a file opened from it, perhaps a downloaded program, would run as administrator too. This asks the desktop's own shell to open it, as Raymond Chen describes in
+    /// "How can I launch an unelevated process from my elevated process?".
     /// </summary>
     public static class Unelevated
     {
