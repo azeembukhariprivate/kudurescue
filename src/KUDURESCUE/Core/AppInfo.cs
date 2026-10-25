@@ -39,22 +39,23 @@ namespace Kudurescue.Core
         public static void OpenUrl(string url)
         {
             if (string.IsNullOrEmpty(url) || !Regex.IsMatch(url, @"^https?://", RegexOptions.IgnoreCase)) return;
+            if (Admin.IsAdmin && Unelevated.Open(url)) return;
             try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
             catch { /* no browser available */ }
         }
 
         public static void OpenFolder(string folder, string select = null)
         {
-            try
-            {
-                var args = select != null ? "/select,\"" + select + "\"" : "\"" + folder + "\"";
-                Process.Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true });
-            }
+            var args = select != null ? "/select,\"" + select + "\"" : "\"" + folder + "\"";
+            // Running as administrator: File Explorer's desktop opens it, so nothing opened from there gets admin rights.
+            if (Admin.IsAdmin && Unelevated.Open("explorer.exe", args)) return;
+            try { Process.Start(new ProcessStartInfo("explorer.exe", args) { UseShellExecute = true }); }
             catch { /* ignore */ }
         }
 
         public static void OpenFile(string path)
         {
+            if (Admin.IsAdmin && Unelevated.Open(path)) return;
             try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
             catch { /* no program for this file type */ }
         }

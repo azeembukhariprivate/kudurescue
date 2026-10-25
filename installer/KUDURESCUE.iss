@@ -3,7 +3,7 @@
 ; (Scanning a drive does: KUDURESCUE asks Windows for them when a scan starts.)
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.0"
+  #define MyAppVersion "1.3.1"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\out\KUDURESCUE"
