@@ -137,7 +137,8 @@ namespace Kudurescue.Core
         }
 
         /// <summary>
-        /// Whether a folder is on the given drive, also when the drive is mounted in a folder.
+        /// Whether a folder is on the given drive, also when the drive is mounted in a folder, or the folder is reached
+        /// through a link (a junction or symbolic link) or a stand-in drive letter (subst) that leads onto the drive.
         /// Recovered files must never be saved to the drive they're recovered from.
         /// </summary>
         public static bool IsOnDrive(string folder, string drive)
@@ -146,6 +147,14 @@ namespace Kudurescue.Core
             try
             {
                 var full = Path.GetFullPath(folder);
+                // Where the folder really is: Windows follows every link and stand-in letter for us.
+                var real = RealVolume(full);
+                if (real != null)
+                {
+                    var scanned = new StringBuilder(128);
+                    if (Native.GetVolumeNameForVolumeMountPoint(letter + @":\", scanned, scanned.Capacity))
+                        return string.Equals(real, scanned.ToString(), StringComparison.OrdinalIgnoreCase);
+                }
                 var mount = new StringBuilder(1024);
                 if (Native.GetVolumePathName(full, mount, mount.Capacity))
                 {
@@ -160,6 +169,35 @@ namespace Kudurescue.Core
             catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException)
             {
                 return char.ToUpperInvariant(folder.TrimStart()[0]) == letter;
+            }
+        }
+
+        /// <summary>
+        /// The volume a folder is really on ("\\?\Volume{...}\"), after following links and stand-in drive letters, or
+        /// null when Windows can't say (a network folder, for one). A folder that doesn't exist yet is looked up through
+        /// the nearest folder above it that does.
+        /// </summary>
+        public static string RealVolume(string folder)
+        {
+            var existing = Path.GetFullPath(folder);
+            while (!Directory.Exists(existing))
+            {
+                var parent = Path.GetDirectoryName(existing);
+                if (string.IsNullOrEmpty(parent)) return null;
+                existing = parent;
+            }
+            using (var handle = Native.CreateFile(existing, 0, Native.FILE_SHARE_READ | Native.FILE_SHARE_WRITE | Native.FILE_SHARE_DELETE,
+                IntPtr.Zero, Native.OPEN_EXISTING, Native.FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) return null;
+                var path = new StringBuilder(1024);
+                var length = Native.GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, Native.VOLUME_NAME_GUID);
+                if (length == 0 || length >= path.Capacity) return null;
+                // "\\?\Volume{guid}\rest\of\path": keep the volume part, with its closing backslash.
+                var text = path.ToString();
+                var end = text.IndexOf('}');
+                return text.StartsWith(@"\\?\Volume{", StringComparison.OrdinalIgnoreCase) && end > 0 && end + 1 < text.Length
+                    ? text.Substring(0, end + 2) : null;
             }
         }
 

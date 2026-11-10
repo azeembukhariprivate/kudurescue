@@ -435,6 +435,32 @@ namespace Kudurescue.Views
 
             results.Destination = _drive + @"\Recovered";
             Expect(results.CheckDestination() != null, "saving to the scanned drive is refused");
+
+            // A folder on another drive that leads onto the scanned drive is refused too: through a link...
+            var link = Path.Combine(_temp, "link-to-scanned");
+            Run("cmd.exe", "/c mklink /J \"" + link + "\" " + _drive + "\\");
+            Expect(Directory.Exists(link), "a link to the scanned drive made");
+            results.Destination = Path.Combine(link, "Recovered");
+            Expect(results.CheckDestination() != null, "saving through a link onto the scanned drive is refused");
+            Directory.Delete(link); // only the link goes
+            Expect(Directory.Exists(_drive + "\\"), "the scanned drive untouched by removing the link");
+
+            // ...and through a stand-in drive letter (subst).
+            var standIn = "PQTUVWXYZ".Select(c => c + ":").FirstOrDefault(d => !Directory.Exists(d + "\\"));
+            if (standIn != null)
+            {
+                Run("subst.exe", standIn + " " + _drive + "\\");
+                try
+                {
+                    Expect(Directory.Exists(standIn + "\\"), "a stand-in letter for the scanned drive made");
+                    results.Destination = standIn + "\\Recovered";
+                    Expect(results.CheckDestination() != null, "saving through a stand-in drive letter is refused");
+                }
+                finally
+                {
+                    Run("subst.exe", standIn + " /D");
+                }
+            }
             results.Destination = Path.Combine(_temp, "ui-recovered");
             Expect(results.CheckDestination() == null, "a folder on another drive is accepted: " + results.CheckDestination());
 

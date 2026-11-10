@@ -215,5 +215,11 @@ namespace Kudurescue.Core
 
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool GetVolumeNameForVolumeMountPoint(string mountPoint, System.Text.StringBuilder volumeName, int length);
+
+        public const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000; // needed to open a folder
+        public const uint VOLUME_NAME_GUID = 0x1;
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern uint GetFinalPathNameByHandle(SafeFileHandle file, System.Text.StringBuilder path, uint length, uint flags);
     }
 }
