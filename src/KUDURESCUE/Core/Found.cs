@@ -111,15 +111,21 @@ namespace Kudurescue.Core
         public static FileKind Of(string name) =>
             Map.TryGetValue(Path.GetExtension(name ?? string.Empty), out var kind) ? kind : FileKind.Other;
 
+        // Shown in lists drawn from templates, so these are put into the language here.
         public static string Label(FileKind kind)
         {
             switch (kind)
             {
-                case FileKind.Email: return "Email & contacts";
-                case FileKind.Design: return "Design";
-                case FileKind.Data: return "Data & code";
-                case FileKind.Programs: return "Programs & disks";
-                default: return kind.ToString();
+                case FileKind.Email: return Lang.T("Email & contacts");
+                case FileKind.Design: return Lang.T("Design");
+                case FileKind.Data: return Lang.T("Data & code");
+                case FileKind.Programs: return Lang.T("Programs & disks");
+                case FileKind.Photos: return Lang.T("Photos");
+                case FileKind.Videos: return Lang.T("Videos");
+                case FileKind.Documents: return Lang.T("Documents");
+                case FileKind.Music: return Lang.T("Music");
+                case FileKind.Archives: return Lang.T("Archives");
+                default: return Lang.T("Other");
             }
         }
 
@@ -127,11 +133,11 @@ namespace Kudurescue.Core
         {
             switch (chance)
             {
-                case Chance.Excellent: return "Excellent";
-                case Chance.Unsure: return "Probably";
-                case Chance.Partial: return $"Partial · {goodPercent}%";
-                case Chance.Overwritten: return "Overwritten";
-                default: return "Encrypted";
+                case Chance.Excellent: return Lang.T("Excellent");
+                case Chance.Unsure: return Lang.T("Probably");
+                case Chance.Partial: return Lang.T("Partial · {0}%", goodPercent);
+                case Chance.Overwritten: return Lang.T("Overwritten");
+                default: return Lang.T("Encrypted");
             }
         }
 
@@ -140,13 +146,13 @@ namespace Kudurescue.Core
             switch (f.Chance)
             {
                 case Chance.Excellent:
-                    return f.Source == FoundSource.RecycleBin ? "Excellent: it's still in the Recycle Bin"
+                    return Lang.T(f.Source == FoundSource.RecycleBin ? "Excellent: it's still in the Recycle Bin"
                         : f.Source == FoundSource.Snapshot ? "Excellent: it's kept in a Previous Versions snapshot"
-                        : "Excellent: every part is still on the drive";
-                case Chance.Unsure: return "Probably: its data is free on the drive, but where it starts had to be worked out. Check the file after recovering it";
-                case Chance.Partial: return $"Partial: {f.GoodPercent}% is still on the drive; the rest has been reused by other files";
-                case Chance.Overwritten: return "Overwritten: other files now use this space";
-                default: return "Encrypted by Windows (EFS): it can't be recovered without the original user's key";
+                        : "Excellent: every part is still on the drive");
+                case Chance.Unsure: return Lang.T("Probably: its data is free on the drive, but where it starts had to be worked out. Check the file after recovering it");
+                case Chance.Partial: return Lang.T("Partial: {0}% is still on the drive; the rest has been reused by other files", f.GoodPercent);
+                case Chance.Overwritten: return Lang.T("Overwritten: other files now use this space");
+                default: return Lang.T("Encrypted by Windows (EFS): it can't be recovered without the original user's key");
             }
         }
     }

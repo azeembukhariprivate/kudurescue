@@ -36,6 +36,9 @@ namespace Kudurescue.Views
             }
             root.Children.Add(themes);
 
+            root.Children.Add(Ui.Heading("Language", 14).Margin(0, 16, 0, 6));
+            root.Children.Add(LangUi.Picker());
+
             root.Children.Add(Ui.Heading("Recovering", 14).Margin(0, 16, 0, 4));
             var folders = new CheckBox { Content = "Keep the original folders when recovering", IsChecked = Settings.KeepFolders };
             folders.Click += (s, e) => Settings.KeepFolders = folders.IsChecked == true;

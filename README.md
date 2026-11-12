@@ -39,6 +39,7 @@
 - **Save and open scans**: save what a scan found to a `.kudurescue` file and open it later to recover more, without scanning again. A Deep scan that was stopped carries on from where it got to.
 - **Right-click a drive** in File Explorer → *Recover deleted files with KUDURESCUE* (optional, chosen when installing or in Settings).
 - **Pick what you want**: the original folder tree, search, filters by type (photos, videos, documents, music, archives, email, design, data and code, programs and disks) and by chance, sorting, and a preview of photos and text files before recovering.
+- **In your language**: English, Malayalam (മലയാളം), Hindi (हिन्दी), Spanish, French and Arabic (with the windows mirrored for right-to-left). KUDURESCUE starts in the same language as Windows when it has it; choose another in Settings.
 - **Safe by design**:
   - The drive being rescued is opened **read-only**; nothing on it is ever changed.
   - Recovered files **can't be saved to the same drive** (that could overwrite the files you're rescuing), and free space is checked first.

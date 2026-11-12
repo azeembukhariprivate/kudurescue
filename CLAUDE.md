@@ -34,6 +34,13 @@ dotnet build src/KUDURESCUE/KUDURESCUE.csproj -c Release -o out/KUDURESCUE
 out\KUDURESCUE\KUDURESCUE.exe --self-test        (Windows only; needs administrator rights)
 ```
 
+## Other languages (1.4)
+
+The shared `Lang`/`LangUi` (kudu-common) put each window into the chosen language as it's shown. The results list is drawn
+from a template, so `FileKinds.Label`, `ChanceLabel` and `ChanceExplained` call `Lang.T` in code, and a file's notes are
+whole sentences (`Fat.AddNote`) translated one by one. Texts are in `src/KUDURESCUE/Lang/<code>.txt`, made and checked
+with kudu-common's `tools/lang.py`; when adding or changing a text, add it to every language file.
+
 ## Shared code (kudu-common)
 
 The files listed in `.kudu-common` (the look and controls in `Controls/`, `Core/Admin.cs`, `AppInfo.cs`, `Args.cs`,

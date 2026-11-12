@@ -403,7 +403,13 @@ namespace Kudurescue.Views
                     f.Chance == Chance.Excellent ? "OkText" : f.Chance == Chance.Partial || f.Chance == Chance.Unsure ? "WarnText" : "BadText"),
                 Ui.Mono(f.Source == FoundSource.Carved ? $"Found {Format.Size(f.Offset)} into the drive" : "Was in " + _drive + "\\" + f.Folder, 11.5, "SubtleText").Margin(0, 10, 0, 0));
             ((TextBlock)info.Children[info.Children.Count - 1]).TextWrapping = TextWrapping.Wrap;
-            if (!string.IsNullOrEmpty(f.Note)) info.Children.Add(Ui.Subtle(f.Note, 12).Margin(0, 8, 0, 0));
+            if (!string.IsNullOrEmpty(f.Note))
+            {
+                // A note can be several sentences put together; each is put into the language on its own.
+                var note = Lang.T(f.Note);
+                if (note == f.Note) note = string.Join(" ", System.Text.RegularExpressions.Regex.Split(f.Note, @"(?<=\.) ").Select(Lang.T));
+                info.Children.Add(Ui.Subtle(note, 12).Margin(0, 8, 0, 0));
+            }
             if (f.Source == FoundSource.RecycleBin && f.Deleted > DateTime.MinValue)
                 info.Children.Add(Ui.Subtle("Deleted " + f.Deleted.ToLocalTime().ToString("d MMM yyyy, HH:mm"), 12).Margin(0, 4, 0, 0));
             _preview.Content = info;

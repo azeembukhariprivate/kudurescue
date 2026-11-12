@@ -469,8 +469,8 @@ namespace Kudurescue.Core
             }
             QuickScan.SetChance(f, ClusterSize, CountUsed);
             if (needed > 1 && f.Chance != Chance.Overwritten)
-                f.Note = (f.Note == null ? string.Empty : f.Note + " ") + "On FAT drives the file is read from consecutive clusters; if it was stored in pieces, parts may be wrong.";
-            if (e.UnsureName) f.Note = (f.Note == null ? string.Empty : f.Note + " ") + "The first letter of its name was lost when it was deleted.";
+                f.Note = AddNote(f.Note, "On FAT drives the file is read from consecutive clusters; if it was stored in pieces, parts may be wrong.");
+            if (e.UnsureName) f.Note = AddNote(f.Note, "The first letter of its name was lost when it was deleted.");
             return f;
         }
 
@@ -478,5 +478,8 @@ namespace Kudurescue.Core
         {
             if (_ownsDevice) Device.Dispose();
         }
+
+        /// <summary>A note after the ones a file already has (each a whole sentence, so each can be shown in another language).</summary>
+        private static string AddNote(string notes, string note) => string.IsNullOrEmpty(notes) ? note : notes + " " + note;
     }
 }

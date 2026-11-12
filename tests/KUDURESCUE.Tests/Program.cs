@@ -20,6 +20,7 @@ namespace Kudurescue.Tests
             Directory.CreateDirectory(_temp);
             try
             {
+                Run("In other languages", LangTests.Run);
                 Run("Decodes runlists", DecodesRunlists);
                 Run("Reads the boot sector", ReadsBootSector);
                 Run("Applies fixups and spots torn records", Fixups);
