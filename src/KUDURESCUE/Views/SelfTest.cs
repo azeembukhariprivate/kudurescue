@@ -59,6 +59,10 @@ namespace Kudurescue.Views
                     Application.Current.FindResource(key);
             });
 
+            Step("Repair a partly whole photo (JPEG and PNG)", RepairPhotos);
+            Step("Preview: the first page of a PDF", PreviewPdf);
+            Step("Preview: a still from a video", PreviewVideo);
+
             MainWindow main = null;
             Step("Main window: choose a drive", () =>
             {
@@ -136,6 +140,158 @@ namespace Kudurescue.Views
             catch { /* read-only folder */ }
             try { Directory.Delete(_temp, true); } catch { /* ignore */ }
             return Errors.Count == 0 ? 0 : 1;
+        }
+
+        // ------------------------------------------------------------------ repair and previews
+
+        private static void Note(string text) => _log.AppendLine("      " + text);
+
+        /// <summary>A 320×240 picture: a blue-to-orange band at every row, so every part looks different from grey.</summary>
+        private static System.Windows.Media.Imaging.BitmapSource TestPicture()
+        {
+            const int w = 320, h = 240;
+            var pixels = new byte[w * h * 4];
+            for (var y = 0; y < h; y++)
+                for (var x = 0; x < w; x++)
+                {
+                    var i = (y * w + x) * 4;
+                    pixels[i] = (byte)(255 - x * 255 / w); // blue
+                    pixels[i + 1] = 60;
+                    pixels[i + 2] = (byte)(x * 255 / w); // red
+                    pixels[i + 3] = 255;
+                }
+            var bmp = System.Windows.Media.Imaging.BitmapSource.Create(w, h, 96, 96, System.Windows.Media.PixelFormats.Bgr32, null, pixels, w * 4);
+            bmp.Freeze();
+            return bmp;
+        }
+
+        private static byte[] Encode(System.Windows.Media.Imaging.BitmapEncoder encoder, System.Windows.Media.Imaging.BitmapSource picture)
+        {
+            encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(picture));
+            using (var ms = new MemoryStream())
+            {
+                encoder.Save(ms);
+                return ms.ToArray();
+            }
+        }
+
+        /// <summary>The colour of a pixel as (red, green, blue).</summary>
+        private static (int R, int G, int B) Pixel(System.Windows.Media.Imaging.BitmapSource picture, int x, int y)
+        {
+            var converted = new System.Windows.Media.Imaging.FormatConvertedBitmap(picture, System.Windows.Media.PixelFormats.Bgr32, null, 0);
+            var px = new byte[4];
+            converted.CopyPixels(new Int32Rect(x, y, 1, 1), px, 4, 0);
+            return (px[2], px[1], px[0]);
+        }
+
+        private static bool Greyish((int R, int G, int B) c) => Math.Abs(c.R - c.G) < 30 && Math.Abs(c.G - c.B) < 30 && c.R > 90 && c.R < 170;
+
+        private static void RepairPhotos()
+        {
+            var picture = TestPicture();
+            foreach (var (ext, bytes) in new[] { (".jpg", Encode(new System.Windows.Media.Imaging.JpegBitmapEncoder { QualityLevel = 90 }, picture)), (".png", Encode(new System.Windows.Media.Imaging.PngBitmapEncoder(), picture)) })
+            {
+                // Other data over the file from 60% of the way in, as when its clusters were reused.
+                var start = bytes.Length * 6 / 10;
+                var damaged = (byte[])bytes.Clone();
+                var noise = new byte[bytes.Length - start];
+                new Random(9).NextBytes(noise);
+                Buffer.BlockCopy(noise, 0, damaged, start, noise.Length);
+                var repaired = Repair.Make(damaged, ext, new List<(long, long)> { (start, noise.Length) });
+                Expect(repaired != null, ext + ": repaired");
+                repaired = Repaired.Polish(ext, repaired) ?? repaired;
+                var opened = Repaired.Open(repaired);
+                Expect(opened != null, ext + ": the repaired copy opens in Windows' own reader");
+                Expect(opened.PixelWidth == 320 && opened.PixelHeight == 240, ext + ": the same size");
+                var top = Pixel(opened, 300, 5);
+                Expect(top.R > 180 && top.B < 80, ext + $": the top as it was (got {top})");
+                var bottom = Pixel(opened, 160, 236);
+                Expect(Greyish(bottom), ext + $": the bottom grey (got {bottom})");
+                Note($"{ext}: {bytes.Length:N0} bytes, damaged from {start:N0}, repaired copy {repaired.Length:N0} bytes");
+                Directory.CreateDirectory(Screenshots.Folder);
+                File.WriteAllBytes(Path.Combine(Screenshots.Folder, "repaired" + ext), repaired);
+            }
+        }
+
+        /// <summary>A one-page PDF with a blue box on it.</summary>
+        private static byte[] TestPdf()
+        {
+            var content = "0 0 1 rg 20 20 260 160 re f";
+            var objects = new[]
+            {
+                "<< /Type /Catalog /Pages 2 0 R >>",
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << >> >>",
+                "<< /Length " + content.Length + " >>\nstream\n" + content + "\nendstream"
+            };
+            var pdf = new StringBuilder("%PDF-1.4\n");
+            var offsets = new List<int>();
+            for (var i = 0; i < objects.Length; i++)
+            {
+                offsets.Add(pdf.Length);
+                pdf.Append(i + 1).Append(" 0 obj\n").Append(objects[i]).Append("\nendobj\n");
+            }
+            var xref = pdf.Length;
+            pdf.Append("xref\n0 ").Append(objects.Length + 1).Append("\n0000000000 65535 f \n");
+            foreach (var o in offsets) pdf.Append(o.ToString("D10")).Append(" 00000 n \n");
+            pdf.Append("trailer\n<< /Size ").Append(objects.Length + 1).Append(" /Root 1 0 R >>\nstartxref\n").Append(xref).Append("\n%%EOF\n");
+            return Encoding.ASCII.GetBytes(pdf.ToString());
+        }
+
+        private static void PreviewPdf()
+        {
+            var task = RichPreview.PdfPage(TestPdf());
+            var until = DateTime.UtcNow.AddSeconds(30);
+            while (!task.IsCompleted && DateTime.UtcNow < until) Pump();
+            Expect(task.IsCompleted && task.Result != null, "Windows' PDF reader shows the first page");
+            var page = task.Result;
+            Expect(page.PixelWidth == 480, "as wide as the preview asks: " + page.PixelWidth);
+            var middle = Pixel(page, page.PixelWidth / 2, page.PixelHeight / 2);
+            Expect(middle.B > 180 && middle.R < 80, $"the blue box on it (got {middle})");
+        }
+
+        /// <summary>A small uncompressed video (AVI): 10 frames of 64×48, blue on top and yellow below.</summary>
+        private static byte[] TestVideo()
+        {
+            const int w = 64, h = 48, frames = 10;
+            var frame = new byte[w * h * 3];
+            for (var y = 0; y < h; y++) // rows are stored bottom first
+                for (var x = 0; x < w; x++)
+                {
+                    var i = (y * w + x) * 3;
+                    var topHalf = y >= h / 2;
+                    frame[i] = (byte)(topHalf ? 255 : 0); frame[i + 1] = (byte)(topHalf ? 0 : 220); frame[i + 2] = (byte)(topHalf ? 0 : 240);
+                }
+            byte[] I32(int v) => BitConverter.GetBytes(v);
+            byte[] I16(short v) => BitConverter.GetBytes(v);
+            byte[] F(string s) => Encoding.ASCII.GetBytes(s);
+            byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
+            byte[] Chunk(string id, byte[] data) => Cat(F(id), I32(data.Length), data, data.Length % 2 == 1 ? new byte[1] : new byte[0]);
+            byte[] List(string type, params byte[][] parts) { var body = Cat(F(type), Cat(parts)); return Cat(F("LIST"), I32(body.Length), body); }
+            var avih = Cat(I32(100000), I32(frame.Length * 10), I32(0), I32(0x10), I32(frames), I32(0), I32(1), I32(frame.Length), I32(w), I32(h), new byte[16]);
+            var strh = Cat(F("vids"), F("DIB "), I32(0), I16(0), I16(0), I32(0), I32(1), I32(10), I32(0), I32(frames), I32(frame.Length), I32(-1), I32(0), I16(0), I16(0), I16(w), I16(h));
+            var strf = Cat(I32(40), I32(w), I32(h), I16(1), I16(24), I32(0), I32(frame.Length), I32(0), I32(0), I32(0), I32(0));
+            var hdrl = List("hdrl", Chunk("avih", avih), List("strl", Chunk("strh", strh), Chunk("strf", strf)));
+            var movi = List("movi", Enumerable.Range(0, frames).Select(_ => Chunk("00db", frame)).ToArray());
+            var index = Cat(Enumerable.Range(0, frames).Select(k => Cat(F("00db"), I32(0x10), I32(4 + k * (frame.Length + 8)), I32(frame.Length))).ToArray());
+            var body2 = Cat(F("AVI "), hdrl, movi, Chunk("idx1", index));
+            return Cat(F("RIFF"), I32(body2.Length), body2);
+        }
+
+        private static void PreviewVideo()
+        {
+            if (!RichPreview.CanReadVideo())
+            {
+                Note("Windows' video reader (Media Foundation) isn't on this PC, so videos show their details only.");
+                return;
+            }
+            var still = RichPreview.VideoFrame(new MemoryStream(TestVideo()));
+            Expect(still != null, "a still from the video");
+            Expect(still.PixelWidth == 64 && still.PixelHeight == 48, $"its size ({still.PixelWidth}×{still.PixelHeight})");
+            var top = Pixel(still, 32, 5);
+            var bottom = Pixel(still, 32, 42);
+            Expect(top.B > 180 && top.R < 80, $"blue on top (got {top})");
+            Expect(bottom.R > 180 && bottom.G > 160 && bottom.B < 80, $"yellow below, the right way up (got {bottom})");
         }
 
         private static void Step(string name, Action action)

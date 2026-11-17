@@ -11,6 +11,11 @@ namespace Kudurescue.Core
         public string Destination { get; set; }
         public bool KeepFolders { get; set; } = true;
         public bool RecoverPartial { get; set; } = true;
+        /// <summary>Partly whole photos and Office files also get a repaired copy, "name (repaired).ext".</summary>
+        public bool Repair { get; set; } = true;
+        /// <summary>Optional finishing touch for a repaired copy (the app opens a repaired photo and saves it again, so every
+        /// viewer shows it); given the extension and the bytes, it returns better bytes or null to keep them.</summary>
+        public Func<string, byte[], byte[]> Polish { get; set; }
     }
 
     public sealed class RecoverProblem
@@ -26,6 +31,10 @@ namespace Kudurescue.Core
         public int Skipped;
         public long Bytes;
         public int BadSectors;
+        /// <summary>Partly whole files that got a repaired copy too.</summary>
+        public int Repaired;
+        /// <summary>Repaired copies made, as their paths.</summary>
+        public readonly List<string> RepairedFiles = new List<string>();
         public readonly List<RecoverProblem> Problems = new List<RecoverProblem>();
         public bool Cancelled;
     }
@@ -73,7 +82,19 @@ namespace Kudurescue.Core
                     bytes += f.Size;
                     result.Bytes += f.Size;
                     result.Recovered++;
-                    if (f.Chance == Chance.Partial) result.Partial++;
+                    if (f.Chance == Chance.Partial)
+                    {
+                        result.Partial++;
+                        if (options.Repair && !f.IsCopy && Core.Repair.CanTry(f.Extension) && f.Size <= MaxRepair)
+                        {
+                            var repaired = RepairCopy(target, f, options.Polish);
+                            if (repaired != null)
+                            {
+                                result.Repaired++;
+                                result.RepairedFiles.Add(repaired);
+                            }
+                        }
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -88,6 +109,37 @@ namespace Kudurescue.Core
                 }
             }
             return result;
+        }
+
+        /// <summary>Files bigger than this aren't repaired (a repair works in memory).</summary>
+        public const long MaxRepair = 512L << 20;
+
+        /// <summary>
+        /// Next to a partly whole file just recovered, "name (repaired).ext" when a repair could save something. The file as
+        /// found stays as it is. Returns the repaired copy's path, or null.
+        /// </summary>
+        public static string RepairCopy(string recovered, FoundFile f, Func<string, byte[], byte[]> polish = null)
+        {
+            try
+            {
+                var bytes = File.ReadAllBytes(recovered);
+                var repaired = Core.Repair.Make(bytes, f.Extension, f.DamagedRanges);
+                if (repaired == null) return null;
+                if (polish != null)
+                {
+                    try { repaired = polish(f.Extension, repaired) ?? repaired; }
+                    catch (Exception) { /* keep the repair as it is */ }
+                }
+                var stem = Path.GetFileNameWithoutExtension(SafeName(f.Name));
+                var path = FreeName(Path.Combine(Path.GetDirectoryName(recovered) ?? string.Empty, stem + " (repaired)" + Path.GetExtension(SafeName(f.Name))));
+                File.WriteAllBytes(path, repaired);
+                SetTimes(path, f);
+                return path;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is OutOfMemoryException)
+            {
+                return null;
+            }
         }
 
         /// <summary>Where a file will be saved: keeping its folders (or not), with a free name, marked when only partly there.</summary>

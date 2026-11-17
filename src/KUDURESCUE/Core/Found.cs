@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
@@ -33,6 +34,13 @@ namespace Kudurescue.Core
 
         /// <summary>Percentage of the file's data that is still free on the drive (100 for Excellent).</summary>
         [DataMember] public int GoodPercent { get; set; } = 100;
+
+        /// <summary>For a partly whole file: the parts other files use now, as start and length in bytes, one pair after another
+        /// (null in scans saved by an older version). A repair cuts the damage off with these.</summary>
+        [DataMember] public List<long> Damaged { get; set; }
+
+        public List<(long Start, long Length)> DamagedRanges =>
+            Damaged == null ? null : Enumerable.Range(0, Damaged.Count / 2).Select(i => (Damaged[2 * i], Damaged[2 * i + 1])).ToList();
 
         [DataMember] public FileKind Kind { get; set; }
 

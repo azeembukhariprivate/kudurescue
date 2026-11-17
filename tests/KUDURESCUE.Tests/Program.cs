@@ -43,6 +43,10 @@ namespace Kudurescue.Tests
                 Run("Saved scans: save, open, recover", SavedScans);
                 Run("Deep scan carries on from where it stopped", DeepResume);
                 Run("Previous Versions: deleted and changed files", SnapshotCompare);
+                Run("Repairs partly whole photos and Office files", () => RepairTests.Run(Check));
+                Run("Recovery makes a repaired copy next to a partly whole file", RepairedCopy);
+                Run("Previews: music details and the words in Office files", () => PreviewTests.Run(Check));
+                Run("Previews read files in place, as recovery would", ReadsInPlace);
             }
             finally
             {
@@ -392,6 +396,48 @@ namespace Kudurescue.Tests
             Equal(2L, pieces[0].Length, "cut length");
             Check(pieces[1].IsSparse && pieces[1].Length == 6, "sparse piece");
             Equal(8L, pieces[2].Length, "cut end");
+        }
+
+        private static void ReadsInPlace()
+        {
+            using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
+            {
+                foreach (var f in Scan().Where(x => x.CanRecover && !x.IsFolder))
+                {
+                    var whole = new MemoryStream();
+                    Recovery.Write(volume, f, whole, null, System.Threading.CancellationToken.None);
+                    var expected = whole.ToArray();
+                    using (var s = FoundStream.Open(volume, f))
+                    {
+                        Check(s != null && s.Length == f.Size, f.Name + ": opened in place");
+                        Check(FoundStream.ReadAt(s, 0, (int)f.Size).SequenceEqual(expected), f.Name + ": the same bytes as recovering it");
+                        if (f.Size > 5000)
+                            Check(FoundStream.ReadAt(s, f.Size - 5000, 3000).SequenceEqual(expected.Skip((int)f.Size - 5000).Take(3000)), f.Name + ": from any place in it");
+                        Check(FoundStream.ReadAt(s, f.Size + 10, 10).Length == 0, f.Name + ": nothing past its end");
+                    }
+                }
+            }
+        }
+
+        private static void RepairedCopy()
+        {
+            var folder = Path.Combine(_temp, "repaired-copy");
+            Directory.CreateDirectory(folder);
+            var picture = RepairTests.PngFile(64, 64, 4);
+            var damaged = (byte[])picture.Clone();
+            for (var i = picture.Length - 40; i < picture.Length; i++) damaged[i] = 0x55;
+            var found = Path.Combine(folder, "holiday (PARTIAL).png");
+            File.WriteAllBytes(found, damaged);
+            var f = new FoundFile { Name = "holiday.png", Chance = Chance.Partial, Damaged = new List<long> { picture.Length - 40, 40 } };
+            var repaired = Recovery.RepairCopy(found, f);
+            Equal(Path.Combine(folder, "holiday (repaired).png"), repaired, "named \"(repaired)\" next to the file as found");
+            Check(File.ReadAllBytes(found).SequenceEqual(damaged), "the file as found is left as it was");
+            Check(RepairTests.PngRows(File.ReadAllBytes(repaired), out var w, out var h).Count == 64 && w == 64, "the repaired copy is a whole picture");
+            Equal(Path.Combine(folder, "holiday (repaired) (2).png"), Recovery.RepairCopy(found, f), "a second repair gets a free name");
+            var text = Path.Combine(folder, "notes (PARTIAL).txt");
+            File.WriteAllText(text, "hello");
+            Check(Recovery.RepairCopy(text, new FoundFile { Name = "notes.txt", Chance = Chance.Partial }) == null, "other kinds of files aren't repaired");
+            Check(Repair.CanTry(".JPG") && Repair.CanTry(".docx") && Repair.CanTry(".xlsx") && Repair.CanTry(".pptx") && !Repair.CanTry(".doc"), "the kinds repaired");
         }
 
         private static void ReadsRecycleBin()

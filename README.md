@@ -38,7 +38,7 @@
 - **Open drive images**: `.img`, `.dd`, `.raw` and `.vhd` files (fixed and dynamic), including disk images with several partitions (MBR or GPT), where you choose the partition.
 - **Save and open scans**: save what a scan found to a `.kudurescue` file and open it later to recover more, without scanning again. A Deep scan that was stopped carries on from where it got to.
 - **Right-click a drive** in File Explorer → *Recover deleted files with KUDURESCUE* (optional, chosen when installing or in Settings).
-- **Pick what you want**: the original folder tree, search, filters by type (photos, videos, documents, music, archives, email, design, data and code, programs and disks) and by chance, sorting, and a preview of photos and text files before recovering.
+- **Pick what you want**: the original folder tree, search, filters by type (photos, videos, documents, music, archives, email, design, data and code, programs and disks) and by chance, sorting, and a preview before recovering: photos, text files, a still picture from videos, the first page of PDFs, the words in Word, Excel and PowerPoint files, and the name, singer and length of music. Previews read the file in place and never write anything.
 - **In your language**: English, Malayalam (മലയാളം), Hindi (हिन्दी), Spanish, French and Arabic (with the windows mirrored for right-to-left). KUDURESCUE starts in the same language as Windows when it has it; choose another in Settings.
 - **Safe by design**:
   - The drive being rescued is opened **read-only**; nothing on it is ever changed.
@@ -47,6 +47,7 @@
   - Damaged sectors don't stop a recovery; unreadable parts are filled with zeros and reported.
 - Handles fragmented, sparse and **NTFS-compressed** files, and files whose details are spread over several index records.
 - Keeps the original folders (optional), restores file dates, and marks partly recovered files with "(PARTIAL)" in the name.
+- **Repairs partly whole files**: a photo (JPEG, PNG) or a Word, Excel or PowerPoint file that comes back only partly whole also gets a repaired copy next to it, "name (repaired)", that opens: the part of the photo that's left with the rest grey, or the text, sheets and slides that can still be read. The file as found is always kept too.
 - Light and dark themes, following Windows.
 
 ## How it works

@@ -79,6 +79,7 @@ namespace Kudurescue.Views
         private readonly TextBox _destination = new TextBox { MinHeight = 36, FontSize = 13 };
         private readonly CheckBox _keepFolders = new CheckBox { Content = "Keep the original folders" };
         private readonly CheckBox _partial = new CheckBox { Content = "Recover partial files too (marked \"(PARTIAL)\" in the name)" };
+        private readonly TextBlock _repairNote = Ui.Subtle("Partly whole photos (JPEG, PNG) and Word, Excel and PowerPoint files also get a repaired copy next to them, \"name (repaired)\", that opens: the part of a photo that's left with the rest grey, or the text, sheets and slides that can still be read.", 12);
         private readonly StackPanel _checks = new StackPanel();
         private Button _recoverButton;
         private CancellationTokenSource _cancel;
@@ -131,8 +132,8 @@ namespace Kudurescue.Views
             _destination.TextChanged += (s, e) => Validate();
             _keepFolders.Checked += (s, e) => Settings.KeepFolders = true;
             _keepFolders.Unchecked += (s, e) => Settings.KeepFolders = false;
-            _partial.Checked += (s, e) => { Settings.RecoverPartial = true; Validate(); };
-            _partial.Unchecked += (s, e) => { Settings.RecoverPartial = false; Validate(); };
+            _partial.Checked += (s, e) => { Settings.RecoverPartial = true; _repairNote.Visibility = _files.Any(f => f.IsChecked && f.Chance == Chance.Partial && Repair.CanTry(f.Extension)) ? Visibility.Visible : Visibility.Collapsed; Validate(); };
+            _partial.Unchecked += (s, e) => { Settings.RecoverPartial = false; _repairNote.Visibility = Visibility.Collapsed; Validate(); };
         }
 
         private bool _bulk;
@@ -415,6 +416,7 @@ namespace Kudurescue.Views
             _preview.Content = info;
 
             if (!f.CanRecover || f.IsFolder) return;
+            if (ShowRichPreview(f, picture, info, version)) return;
             var isImage = ImageTypes.Contains(f.Extension) && f.Size <= 40L * 1024 * 1024;
             var isText = TextTypes.Contains(f.Extension);
             if (!isImage && !isText) return;
@@ -452,6 +454,105 @@ namespace Kudurescue.Views
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
+        /// <summary>
+        /// Videos (a still and the length), PDF files (the first page), Word, Excel and PowerPoint files (their words) and
+        /// music (name, singer, album and length). Everything is read in place, in memory. False when it isn't one of these.
+        /// </summary>
+        private bool ShowRichPreview(FoundFile f, Border picture, StackPanel info, int version)
+        {
+            var ext = f.Extension;
+            var volume = _volume;
+            const long MaxWhole = 50L << 20;
+            void Text(string text)
+            {
+                var box = Ui.Mono(text, 11, "Text");
+                box.TextWrapping = TextWrapping.Wrap;
+                box.VerticalAlignment = VerticalAlignment.Top;
+                picture.Child = new Border { Padding = new Thickness(10), Child = box };
+            }
+            void Picture(BitmapSource image) => picture.Child = new Image { Source = image, Stretch = Stretch.Uniform };
+            void Details(MediaInfo media)
+            {
+                if (media == null) return;
+                var lines = new List<string>();
+                if (!string.IsNullOrEmpty(media.Title)) lines.Add(media.Title);
+                var by = string.Join(" · ", new[] { media.Artist, media.Album }.Where(x => !string.IsNullOrEmpty(x)));
+                if (by.Length > 0) lines.Add(by);
+                if (media.Length > TimeSpan.Zero) lines.Add(Lang.T("Length: {0}", MediaInfo.LengthText(media.Length)));
+                if (lines.Count > 0) info.Children.Insert(1, Ui.Subtle(string.Join("\n", lines), 12).Margin(0, 8, 0, 0));
+            }
+            bool Current() => version == _previewVersion;
+
+            if (RichPreview.VideoKinds.Contains(ext))
+            {
+                Task.Run(() =>
+                {
+                    using (var s = FoundStream.Open(volume, f))
+                    {
+                        if (s == null) return (null, null);
+                        var media = MediaInfo.Read(s, ext);
+                        s.Position = 0;
+                        return (RichPreview.VideoFrame(s), media);
+                    }
+                }).ContinueWith(t =>
+                {
+                    if (!Current() || t.IsFaulted) return;
+                    if (t.Result.Item1 != null) Picture(t.Result.Item1);
+                    Details(t.Result.Item2);
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+                return true;
+            }
+            if (MediaInfo.Kinds.Contains(ext))
+            {
+                Task.Run(() =>
+                {
+                    using (var s = FoundStream.Open(volume, f)) return s == null ? null : MediaInfo.Read(s, ext);
+                }).ContinueWith(t =>
+                {
+                    if (!Current() || t.IsFaulted || t.Result == null) return;
+                    var media = t.Result;
+                    var lines = Ui.Column(Ui.Icon("IconWave", 30).Res(System.Windows.Documents.TextElement.ForegroundProperty, "OffDot"),
+                        Ui.Text(media.Title ?? f.Name, 13.5, bold: true, wrap: true).Margin(0, 10, 0, 0));
+                    var by = string.Join(" · ", new[] { media.Artist, media.Album }.Where(x => !string.IsNullOrEmpty(x)));
+                    if (by.Length > 0) lines.Children.Add(Ui.Subtle(by, 12));
+                    if (media.Length > TimeSpan.Zero) lines.Children.Add(Ui.Subtle(Lang.T("Length: {0}", MediaInfo.LengthText(media.Length)), 12).Margin(0, 4, 0, 0));
+                    foreach (FrameworkElement child in lines.Children) child.HorizontalAlignment = HorizontalAlignment.Center;
+                    lines.VerticalAlignment = VerticalAlignment.Center;
+                    picture.Child = lines;
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+                return true;
+            }
+            if (ext == ".pdf" && f.Size <= MaxWhole)
+            {
+                Task.Run(() => Recovery.ReadStart(volume, f, (int)f.Size)).ContinueWith(async t =>
+                {
+                    if (!Current() || t.IsFaulted || t.Result == null) return;
+                    var page = await RichPreview.PdfPage(t.Result);
+                    if (Current() && page != null)
+                    {
+                        Picture(page);
+                        picture.Height = 260;
+                    }
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+                return true;
+            }
+            if (OfficeText.Kinds.Contains(ext) && f.Size <= MaxWhole)
+            {
+                Task.Run(() =>
+                {
+                    var bytes = Recovery.ReadStart(volume, f, (int)f.Size);
+                    return bytes == null ? null : OfficeText.Read(bytes, ext);
+                }).ContinueWith(t =>
+                {
+                    if (!Current() || t.IsFaulted || t.Result == null) return;
+                    Text(t.Result);
+                    picture.Height = 260;
+                }, TaskScheduler.FromCurrentSynchronizationContext());
+                return true;
+            }
+            return false;
+        }
+
         // ------------------------------------------------------------------ footer
 
         public void RefreshFooter()
@@ -481,6 +582,7 @@ namespace Kudurescue.Views
             _keepFolders.IsChecked = Settings.KeepFolders;
             _partial.IsChecked = Settings.RecoverPartial;
             _partial.Visibility = _files.Any(f => f.IsChecked && f.Chance == Chance.Partial) ? Visibility.Visible : Visibility.Collapsed;
+            _repairNote.Visibility = _files.Any(f => f.IsChecked && f.Chance == Chance.Partial && Repair.CanTry(f.Extension)) && _partial.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             if (_recoverPage == null) _recoverPage = CreateRecoverPage();
             _recoverButton = Ui.Button("Recover", null, "PrimaryButton", (s, e) => StartRecovery());
             _main.SetFooter(Ui.Button("Back to files", "IconBack", click: (s, e) => _main.ShowResultsPage()), _recoverButton);
@@ -503,7 +605,7 @@ namespace Kudurescue.Views
             var card = Ui.Card(Ui.Column(
                 Ui.Text("Where should the recovered files go?", 18, bold: true),
                 Ui.Subtle($"Choose a different drive from {_drive}, so the files you're rescuing aren't overwritten.", 12.5).Margin(0, 3, 0, 14),
-                row, _checks.Margin(0, 12, 0, 0), _keepFolders.Margin(0, 14, 0, 0), _partial.Margin(0, 8, 0, 0)), 22);
+                row, _checks.Margin(0, 12, 0, 0), _keepFolders.Margin(0, 14, 0, 0), _partial.Margin(0, 8, 0, 0), _repairNote.Margin(26, 2, 0, 0)), 22);
             card.MaxWidth = 680;
             card.VerticalAlignment = VerticalAlignment.Top;
             card.Margin = new Thickness(16, 16, 16, 16);
@@ -574,7 +676,7 @@ namespace Kudurescue.Views
         {
             if (Validate() != null || IsRecovering) return Task.CompletedTask;
             var files = ToRecover();
-            var options = new RecoverOptions { Destination = Destination, KeepFolders = _keepFolders.IsChecked == true, RecoverPartial = _partial.IsChecked == true };
+            var options = new RecoverOptions { Destination = Destination, KeepFolders = _keepFolders.IsChecked == true, RecoverPartial = _partial.IsChecked == true, Polish = Repaired.Polish };
             Settings.LastDestination = options.Destination;
             var total = Math.Max(1, files.Sum(f => f.Size));
             _cancel = new CancellationTokenSource();
@@ -628,6 +730,9 @@ namespace Kudurescue.Views
                     Ui.Text(title, 19, bold: true).Margin(10, 0, 0, 0)),
                 Ui.Text($"{Format.Size(r.Bytes)} saved to {destination}", 13, wrap: true).Margin(0, 10, 0, 0));
             if (r.Partial > 0) lines.Children.Add(Ui.Subtle($"{Format.Count(r.Partial, "file")} only partly there: marked \"(PARTIAL)\" in the name. Parts may be damaged.", 12.5).Margin(0, 6, 0, 0));
+            if (r.Repaired > 0)
+                lines.Children.Add(Ui.Subtle(r.Repaired == 1 ? Lang.T("1 of them also has a repaired copy next to it, \"(repaired)\" in the name, that opens.")
+                    : Lang.T("{0} of them also have a repaired copy next to them, \"(repaired)\" in the name, that open.", r.Repaired), 12.5).Margin(0, 6, 0, 0));
             if (r.Skipped > 0) lines.Children.Add(Ui.Subtle($"{Format.Count(r.Skipped, "file")} skipped (overwritten, encrypted, or partial with that option off).", 12.5).Margin(0, 6, 0, 0));
             if (r.BadSectors > 0) lines.Children.Add(Ui.Subtle($"{r.BadSectors:N0} damaged sectors on {_drive} couldn't be read; those parts were filled with zeros. The drive may be failing.", 12.5).Margin(0, 6, 0, 0));
             if (r.Problems.Count > 0)

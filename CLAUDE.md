@@ -34,6 +34,19 @@ dotnet build src/KUDURESCUE/KUDURESCUE.csproj -c Release -o out/KUDURESCUE
 out\KUDURESCUE\KUDURESCUE.exe --self-test        (Windows only; needs administrator rights)
 ```
 
+## Preview and repair (1.5)
+
+- Scans record where a partly whole file's clusters are now used by other files (`FoundFile.Damaged`, start/length pairs
+  from `QuickScan.DamagedParts`; null in scans saved before 1.5).
+- `Core/Repair.cs`: JPEG (closed where the damage starts; the header must be whole) and PNG (the rows before the damage,
+  the rest grey, written again); `Core/RepairOffice.cs`: .docx/.xlsx/.pptx parts found by their own headers and checked by
+  CRC, the package put together again (links to lost parts removed, lost pictures grey, a damaged document keeps its text,
+  damaged sheets their whole rows, lost slides/sheets left out). `Recovery.RepairCopy` writes "name (repaired).ext" next to
+  the file as found; `Views/Repaired.Polish` saves a repaired JPEG again through Windows' reader.
+- `Core/Previews.cs`: `FoundStream` reads a found file in place from any position (no copy anywhere); `MediaInfo` (MP3, M4A/MP4,
+  FLAC, WAV, Ogg/Opus) and `OfficeText`. `Views/RichPreview.cs`: a still from a video (Media Foundation, from memory) and the
+  first page of a PDF (Windows' PDF reader, via Microsoft.Windows.SDK.Contracts). Previews never write to any drive.
+
 ## Other languages (1.4)
 
 The shared `Lang`/`LangUi` (kudu-common) put each window into the chosen language as it's shown. The results list is drawn

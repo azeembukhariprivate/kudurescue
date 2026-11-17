@@ -13,7 +13,7 @@
     <StartupObject>Kudurescue.Program</StartupObject>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Product>KUDURESCUE</Product>
     <Company>Azeem Bukhari</Company>
     <Authors>Azeem Bukhari</Authors>
@@ -32,6 +32,8 @@
   -->
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- Windows' own PDF reader, for the preview of PDF files (part of Windows 10 and 11). -->
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
   </ItemGroup>
 
   <ItemGroup>
