@@ -77,6 +77,27 @@ namespace Kudurescue.Tests
             check((OfficeText.Read(doc, ".doc") ?? string.Empty).Contains("An old Word document about the boat race."), "older Word files: the words inside");
             check(OfficeText.Read(A(@"{\rtf1\ansi{\fonttbl{\f0 Arial;}}\f0 Hello\par world}"), ".rtf") == "Hello\nworld", "RTF: " + OfficeText.Read(A(@"{\rtf1\ansi{\fonttbl{\f0 Arial;}}\f0 Hello\par world}"), ".rtf"));
             check(OfficeText.Read(new byte[300], ".docx") == null, "nothing for a file with no words");
+
+            // A file made to swell when unpacked (30 parts of 20 MB from under 1 MB) is read only up to a limit.
+            var bomb = new MemoryStream();
+            using (var archive = new ZipArchive(bomb, ZipArchiveMode.Create, true))
+            {
+                using (var s = archive.CreateEntry("word/document.xml").Open()) { var b = U("<w:document><w:body><w:p><w:r><w:t>Small words</w:t></w:r></w:p></w:body></w:document>"); s.Write(b, 0, b.Length); }
+                var zeros = new byte[1 << 20];
+                for (var i = 0; i < 30; i++)
+                    using (var s = archive.CreateEntry($"word/big{i}.xml", CompressionLevel.Optimal).Open())
+                        for (var k = 0; k < 20; k++) s.Write(zeros, 0, zeros.Length);
+            }
+            var bombBytes = bomb.ToArray();
+            check(bombBytes.Length < 2 << 20, "the swelling file is small: " + bombBytes.Length);
+            var before = GC.GetTotalAllocatedBytes(true);
+            check(OfficeText.Read(bombBytes, ".docx") == "Small words", "its words still shown");
+            var used = GC.GetTotalAllocatedBytes(true) - before;
+            check(used < 1L << 30, "it didn't unpack everything (all of it costs about 2.5 GB counted this way): " + (used >> 20) + " MB");
+            // Without its list at the end, read from the parts' own headers: each part and all of them have a limit too.
+            var salvaged = Office.Salvage(bombBytes.Take(bombBytes.Length - 100).ToArray(), new List<(long, long)>());
+            check(salvaged.Values.Sum(x => (long)x.Data.Length) <= Office.MaxTotal + (1 << 16), "all the parts together kept under the limit");
+            check(salvaged.Values.All(x => x.Data.Length <= Office.MaxPart + (1 << 16)), "each part kept under the limit");
         }
 
         private static byte[] Zip(params (string Name, string Text)[] parts)

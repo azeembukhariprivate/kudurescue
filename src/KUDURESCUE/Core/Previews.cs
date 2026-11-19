@@ -466,16 +466,26 @@ namespace Kudurescue.Core
             Dictionary<string, byte[]> parts;
             try
             {
+                // Only the parts with words in them, each read up to a limit whatever size it claims, so a file made to
+                // swell when unpacked can't fill the memory.
+                parts = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+                long budget = Office.MaxTotal / 4;
                 using (var zip = new ZipArchive(new MemoryStream(data), ZipArchiveMode.Read))
-                    parts = zip.Entries.Where(e => e.Length < 32 << 20).ToDictionary(e => e.FullName, e =>
+                    foreach (var e in zip.Entries)
                     {
+                        if (budget <= 0) break;
+                        if (!e.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase) || parts.ContainsKey(e.FullName)) continue;
+                        var most = Math.Min(32L << 20, budget);
                         using (var s = e.Open())
                         using (var m = new MemoryStream())
                         {
-                            s.CopyTo(m);
-                            return m.ToArray();
+                            var buffer = new byte[1 << 16];
+                            int n;
+                            while (m.Length < most && (n = s.Read(buffer, 0, (int)Math.Min(buffer.Length, most - m.Length))) > 0) m.Write(buffer, 0, n);
+                            budget -= m.Length;
+                            parts[e.FullName] = m.ToArray();
                         }
-                    }, StringComparer.OrdinalIgnoreCase);
+                    }
             }
             catch (InvalidDataException)
             {

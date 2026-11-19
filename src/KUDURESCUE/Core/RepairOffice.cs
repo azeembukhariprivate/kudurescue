@@ -36,11 +36,15 @@ namespace Kudurescue.Core
             public bool Whole;
         }
 
+        /// <summary>The most one part is unpacked to, and all the parts together: a file made to swell when unpacked can't fill the memory.</summary>
+        public const long MaxPart = 64L << 20, MaxTotal = 512L << 20;
+
         /// <summary>Every part that can be found from its own header, whole or not (the last copy of a name wins if whole).</summary>
         public static Dictionary<string, Part> Salvage(byte[] zip, List<(long Start, long Length)> damaged)
         {
             var parts = new Dictionary<string, Part>(StringComparer.OrdinalIgnoreCase);
-            for (var pos = 0; pos + 30 <= zip.Length; pos++)
+            long budget = MaxTotal;
+            for (var pos = 0; pos + 30 <= zip.Length && budget > 0; pos++)
             {
                 if (zip[pos] != 0x50 || zip[pos + 1] != 0x4B || zip[pos + 2] != 3 || zip[pos + 3] != 4) continue;
                 var flags = U16(zip, pos + 6);
@@ -67,12 +71,14 @@ namespace Kudurescue.Core
                 var hit = damaged.Any(r => r.Start < dataStart + size && r.Start + r.Length > pos);
                 byte[] content;
                 bool whole;
-                if (method == 0)
+                var most = Math.Min(Math.Min(full > 0 ? full : MaxPart, MaxPart), budget);
+                if (method == 8) content = Inflate(zip, dataStart, available, most);
+                else
                 {
                     content = new byte[available];
                     Buffer.BlockCopy(zip, dataStart, content, 0, available);
                 }
-                else content = Inflate(zip, dataStart, available, full > 0 ? full : 64L << 20);
+                budget -= content.Length;
                 whole = !hit && available == size && content.Length == full && Crc32.Of(content, 0, content.Length) == crc;
                 if (!whole && hit)
                 {
@@ -80,7 +86,7 @@ namespace Kudurescue.Core
                     var first = damaged.Where(r => r.Start + r.Length > dataStart).Select(r => r.Start).DefaultIfEmpty(long.MaxValue).Min();
                     if (first <= dataStart) content = new byte[0];
                     else if (method == 0) content = content.Take((int)Math.Min(content.Length, first - dataStart)).ToArray();
-                    else content = Inflate(zip, dataStart, (int)Math.Min(available, first - dataStart), full > 0 ? full : 64L << 20);
+                    else content = Inflate(zip, dataStart, (int)Math.Min(available, first - dataStart), most);
                 }
                 if (!parts.TryGetValue(name, out var had) || (!had.Whole && (whole || content.Length > had.Data.Length)))
                     parts[name] = new Part { Name = name, Data = content, Whole = whole };
