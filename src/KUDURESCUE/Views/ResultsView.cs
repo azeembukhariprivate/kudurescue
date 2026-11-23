@@ -1,3 +1,5 @@
+// The files found: filters by kind and chance, search, the folder tree, the list, the preview, and the recover page
+// with its progress and result.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -21,6 +23,7 @@ namespace Kudurescue.Views
     /// <summary>Steps 3 and 4: pick the files to recover (folders, filters, preview), then recover them to another drive.</summary>
     public sealed class ResultsView
     {
+        /// <summary>The look of a row (made from XAML, so long lists stay quick).</summary>
         private const string RowTemplate = @"
 <DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>
   <Grid Height='32'>
@@ -48,42 +51,73 @@ namespace Kudurescue.Views
   </DataTemplate.Triggers>
 </DataTemplate>";
 
+        /// <summary>The endings shown as pictures in the preview.</summary>
         private static readonly HashSet<string> ImageTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".gif", ".bmp", ".tif", ".tiff", ".ico", ".heic", ".heif", ".webp" };
+        /// <summary>The endings shown as text in the preview.</summary>
         private static readonly HashSet<string> TextTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".txt", ".csv", ".tsv", ".log", ".md", ".ini", ".cfg", ".json", ".xml", ".html", ".htm", ".yaml", ".yml", ".cs", ".py", ".js", ".ts", ".css", ".sql", ".bat", ".ps1", ".vcf", ".ics", ".eml", ".srt" };
 
+        /// <summary>The main window.</summary>
         private readonly MainWindow _main;
+        /// <summary>Every file found.</summary>
         private readonly List<FoundFile> _files;
+        /// <summary>The drive they're on.</summary>
         private readonly IVolume _volume;
+        /// <summary>The drive's letter or image's name.</summary>
         private readonly string _drive;
+        /// <summary>What's shown at the top.</summary>
         private readonly string _title;
+        /// <summary>True when the files are the Recycle Bin's.</summary>
         private readonly bool _recycleBin;
 
+        /// <summary>The list of files.</summary>
         private readonly ListBox _list = new ListBox { SelectionMode = SelectionMode.Single }.Styled("TableList");
+        /// <summary>The folder tree.</summary>
         private readonly ListBox _tree = new ListBox().Styled("TableList");
+        /// <summary>The kinds' chips.</summary>
         private readonly WrapPanel _kindChips = new WrapPanel();
+        /// <summary>The chances' chips.</summary>
         private readonly WrapPanel _chanceChips = new WrapPanel();
+        /// <summary>The search box.</summary>
         private readonly TextBox _search = new TextBox { MinHeight = 32 };
+        /// <summary>The preview.</summary>
         private readonly ContentControl _preview = new ContentControl { Focusable = false };
+        /// <summary>How many are shown.</summary>
         private readonly TextBlock _shownText = Ui.Subtle(string.Empty, 12, false);
+        /// <summary>Searches a moment after typing stops.</summary>
         private readonly DispatcherTimer _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        /// <summary>The folders open in the tree.</summary>
         private readonly HashSet<string> _expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { string.Empty };
+        /// <summary>The files shown.</summary>
         private List<FoundFile> _shown = new List<FoundFile>();
+        /// <summary>The folder shown (null for all).</summary>
         private string _folder;       // null = all folders; otherwise this folder and those inside it
+        /// <summary>The kind shown (null for all).</summary>
         private FileKind? _kind;
+        /// <summary>The chance shown (null for all).</summary>
         private Chance? _chance;
+        /// <summary>What the list is sorted by.</summary>
         private string _sort = "folder";
+        /// <summary>Sorted backwards.</summary>
         private bool _descending;
+        /// <summary>Counts previews, so an older one that finishes late is ignored.</summary>
         private int _previewVersion;
 
         // Recover
         private readonly TextBox _destination = new TextBox { MinHeight = 36, FontSize = 13 };
+        /// <summary>Keep the files' folders.</summary>
         private readonly CheckBox _keepFolders = new CheckBox { Content = "Keep the original folders" };
+        /// <summary>Also recover files that are only partly whole.</summary>
         private readonly CheckBox _partial = new CheckBox { Content = "Recover partial files too (marked \"(PARTIAL)\" in the name)" };
+        /// <summary>A note on repairing partly whole photos and Office files.</summary>
         private readonly TextBlock _repairNote = Ui.Subtle("Partly whole photos (JPEG, PNG) and Word, Excel and PowerPoint files also get a repaired copy next to them, \"name (repaired)\", that opens: the part of a photo that's left with the rest grey, or the text, sheets and slides that can still be read.", 12);
+        /// <summary>The checks on where to save.</summary>
         private readonly StackPanel _checks = new StackPanel();
+        /// <summary>Starts recovering.</summary>
         private Button _recoverButton;
+        /// <summary>Stops recovering (null when it isn't).</summary>
         private CancellationTokenSource _cancel;
 
+        /// <summary>Makes the results for these files.</summary>
         public ResultsView(MainWindow main, List<FoundFile> files, IVolume volume, string drive, string title, bool recycleBin)
         {
             _main = main;
@@ -136,6 +170,7 @@ namespace Kudurescue.Views
             _partial.Unchecked += (s, e) => { Settings.RecoverPartial = false; _repairNote.Visibility = Visibility.Collapsed; Validate(); };
         }
 
+        /// <summary>True while ticking many files at once (the totals are updated once at the end).</summary>
         private bool _bulk;
 
         /// <summary>Ticks or unticks many files, updating the totals once at the end.</summary>
@@ -147,8 +182,11 @@ namespace Kudurescue.Views
             RefreshFooter();
         }
 
+        /// <summary>Every file found.</summary>
         public List<FoundFile> Files => _files;
+        /// <summary>The drive.</summary>
         public IVolume Volume => _volume;
+        /// <summary>What's shown at the top.</summary>
         public string Title => _title;
 
         /// <summary>Set when a stopped Deep scan can carry on; adds a "Continue the Deep scan" button.</summary>
@@ -160,12 +198,18 @@ namespace Kudurescue.Views
             if (_drive == null || _drive.Length != 2 || _drive[1] != ':' || _volume is SnapshotVolume) return false;
             return Drives.IsOnDrive(folder, _drive);
         }
+        /// <summary>The files shown (for the self-test).</summary>
         public List<FoundFile> Shown => _shown;
+        /// <summary>True while recovering.</summary>
         public bool IsRecovering => _cancel != null;
+        /// <summary>The last recovery's result.</summary>
         public RecoverResult LastResult { get; private set; }
+        /// <summary>The folder to save to.</summary>
         public string Destination { get => _destination.Text.Trim().Trim('"'); set => _destination.Text = value; }
+        /// <summary>How many are ticked.</summary>
         public int Ticked => _files.Count(f => f.IsChecked);
 
+        /// <summary>Stops recovering.</summary>
         public void Cancel() => _cancel?.Cancel();
 
         /// <summary>What's wrong with the chosen destination, or null when it can be used.</summary>
@@ -173,7 +217,9 @@ namespace Kudurescue.Views
 
         // ================================================================== step 3: pick files
 
+        /// <summary>The files page, once made.</summary>
         private UIElement _page;
+        /// <summary>The header above the list.</summary>
         private readonly Grid _header = new Grid { Margin = new Thickness(0, 4, 0, 0) };
 
         /// <summary>The page is built once (its controls can only have one parent) and refreshed each time it's shown.</summary>
@@ -187,6 +233,7 @@ namespace Kudurescue.Views
             return _page;
         }
 
+        /// <summary>Fills the header: what was scanned and the totals.</summary>
         private void BuildHeader()
         {
             _header.Children.Clear();
@@ -202,6 +249,7 @@ namespace Kudurescue.Views
             _header.Children.Add(SortHeader("Recovery chance", "chance").At(0, 5));
         }
 
+        /// <summary>Makes the files page.</summary>
         private UIElement CreatePage()
         {
 
@@ -235,6 +283,7 @@ namespace Kudurescue.Views
             return grid;
         }
 
+        /// <summary>Puts one thing at the top and another filling the rest.</summary>
         private static DockPanel DockTop(UIElement top, UIElement fill)
         {
             var d = new DockPanel { LastChildFill = true };
@@ -244,6 +293,7 @@ namespace Kudurescue.Views
             return d;
         }
 
+        /// <summary>A heading that sorts the list when clicked.</summary>
         private Button SortHeader(string text, string key)
         {
             var arrow = _sort == key ? (_descending ? " ↓" : " ↑") : string.Empty;
@@ -259,6 +309,7 @@ namespace Kudurescue.Views
             return b;
         }
 
+        /// <summary>Fills the folder tree.</summary>
         private void BuildTree()
         {
             // Count files per folder, including everything inside.
@@ -309,6 +360,7 @@ namespace Kudurescue.Views
             Add(string.Empty, 0);
         }
 
+        /// <summary>The scroll viewer inside a control.</summary>
         private static ScrollViewer FindScroll(DependencyObject d)
         {
             if (d is ScrollViewer sv) return sv;
@@ -320,6 +372,7 @@ namespace Kudurescue.Views
             return null;
         }
 
+        /// <summary>Fills the kinds' and chances' chips with their counts.</summary>
         private void BuildChips()
         {
             _kindChips.Children.Clear();
@@ -340,6 +393,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>Adds a chip.</summary>
         private void Chip(WrapPanel panel, string label, int count, bool on, Action select)
         {
             var t = new ToggleButton { Content = $"{label} {count:N0}", IsChecked = on, Margin = new Thickness(0, 0, 6, 6) }.Styled("ChipToggle");
@@ -352,6 +406,7 @@ namespace Kudurescue.Views
             panel.Children.Add(t);
         }
 
+        /// <summary>Fills the list (by folder, kind, chance and search).</summary>
         private void Fill()
         {
             IEnumerable<FoundFile> q = _files;
@@ -380,6 +435,7 @@ namespace Kudurescue.Views
 
         // ------------------------------------------------------------------ preview
 
+        /// <summary>Shows a preview of a file, read in place (nothing is copied or written).</summary>
         private void ShowPreview(FoundFile f)
         {
             var version = ++_previewVersion;
@@ -555,6 +611,7 @@ namespace Kudurescue.Views
 
         // ------------------------------------------------------------------ footer
 
+        /// <summary>Updates the bar at the bottom: how many are ticked and their size.</summary>
         public void RefreshFooter()
         {
             if (_main.Step != 2) return;
@@ -574,8 +631,10 @@ namespace Kudurescue.Views
 
         // ================================================================== step 4: recover
 
+        /// <summary>The recover page, once made.</summary>
         private UIElement _recoverPage;
 
+        /// <summary>The recover page.</summary>
         public UIElement BuildRecoverPage()
         {
             if (string.IsNullOrEmpty(_destination.Text)) _destination.Text = SuggestDestination();
@@ -590,6 +649,7 @@ namespace Kudurescue.Views
             return _recoverPage;
         }
 
+        /// <summary>Makes the recover page: where to save and the options.</summary>
         private UIElement CreateRecoverPage()
         {
             _destination.Res(Control.FontFamilyProperty, "MonoFont");
@@ -612,6 +672,7 @@ namespace Kudurescue.Views
             return new ScrollViewer { Content = card, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
         }
 
+        /// <summary>A folder to save to: on another drive, named by the drive and time.</summary>
         private string SuggestDestination()
         {
             var stamp = DateTime.Now.ToString("yyyy-MM-dd HH.mm");
@@ -630,6 +691,7 @@ namespace Kudurescue.Views
             return other == null ? string.Empty : Path.Combine(other.Root, "KUDURESCUE", name);
         }
 
+        /// <summary>The files to recover (ticked, and partly whole ones only when asked).</summary>
         private List<FoundFile> ToRecover() =>
             _files.Where(f => f.IsChecked && (f.Chance == Chance.Excellent || f.Chance == Chance.Unsure || (f.Chance == Chance.Partial && _partial.IsChecked == true))).ToList();
 
@@ -668,7 +730,9 @@ namespace Kudurescue.Views
             return problem;
         }
 
+        /// <summary>The recovery's progress bar.</summary>
         private ProgressBar _bar;
+        /// <summary>The file being saved, and the counts.</summary>
         private TextBlock _current, _counts;
 
         /// <summary>Recovers the ticked files. Returns when it's finished (the self-test waits on it).</summary>
@@ -715,12 +779,14 @@ namespace Kudurescue.Views
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
+        /// <summary>Shows a page.</summary>
         private void SetPage(UIElement content)
         {
             var host = new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Focusable = false };
             _main.ShowRecoverContent(host);
         }
 
+        /// <summary>Shows how the recovery went, with a button to open the folder.</summary>
         private void ShowDone(RecoverResult r, string destination)
         {
             var ok = r.Recovered > 0 && r.Problems.Count == 0 && !r.Cancelled;
@@ -753,8 +819,10 @@ namespace Kudurescue.Views
         }
     }
 
+    /// <summary>A small help for setting up controls inline.</summary>
     internal static class LayoutExtensions
     {
+        /// <summary>Runs setup on an element and returns it.</summary>
         public static T With<T>(this T element, Action<T> setup)
         {
             setup(element);

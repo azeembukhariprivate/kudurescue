@@ -1,3 +1,5 @@
+// The tests for the parts that don't need Windows: NTFS, FAT32 and exFAT images made byte by byte, finding and
+// recovering deleted files, the deep scan, disk images, saved scans, previews and repairs. Run with "dotnet run".
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,10 +12,14 @@ namespace Kudurescue.Tests
     /// <summary>A tiny test runner: each check prints PASS or FAIL, and the exit code is the number of failures.</summary>
     internal static class Program
     {
+        /// <summary>How many checks failed.</summary>
         private static int _failures;
+        /// <summary>How many checks passed.</summary>
         private static int _passes;
+        /// <summary>A folder for the test files, removed at the end.</summary>
         private static string _temp;
 
+        /// <summary>Runs every test and returns 1 when any check failed.</summary>
         private static int Main()
         {
             _temp = Path.Combine(Path.GetTempPath(), "kudurescue-tests-" + Guid.NewGuid().ToString("N"));
@@ -57,6 +63,7 @@ namespace Kudurescue.Tests
             return _failures;
         }
 
+        /// <summary>Runs one test, writing whether it passed.</summary>
         private static void Run(string name, Action test)
         {
             try
@@ -72,11 +79,13 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>Counts a check, writing what failed.</summary>
         private static void Check(bool condition, string what)
         {
             if (!condition) throw new Exception(what);
         }
 
+        /// <summary>Checks two values are equal, writing both when they aren't.</summary>
         private static void Equal<T>(T expected, T actual, string what)
         {
             if (!EqualityComparer<T>.Default.Equals(expected, actual))
@@ -85,13 +94,16 @@ namespace Kudurescue.Tests
 
         // ================================================================== the test drive
 
+        /// <summary>The test files' bytes.</summary>
         private static readonly byte[] PhotoData = NtfsImage.Pattern(10000, 1);
         private static readonly byte[] ReportData = NtfsImage.Pattern(12000, 2);
         private static readonly byte[] SparseHead = NtfsImage.Pattern(4096, 3);
         private static readonly byte[] SparseTail = NtfsImage.Pattern(4096, 4);
         private static readonly byte[] ListedData = NtfsImage.Pattern(8000, 5);
         private static readonly byte[] PartialData = NtfsImage.Pattern(16384, 6);
+        /// <summary>Bytes that NTFS compresses well.</summary>
         private static byte[] _compressible;
+        /// <summary>The test NTFS image.</summary>
         private static string _image;
 
         /// <summary>Builds (once) a drive image with one of every case the engine has to handle.</summary>
@@ -242,8 +254,10 @@ namespace Kudurescue.Tests
             return _image;
         }
 
+        /// <summary>The files found in the test image.</summary>
         private static List<FoundFile> _found;
 
+        /// <summary>Scans the test image.</summary>
         private static List<FoundFile> Scan()
         {
             if (_found != null) return _found;
@@ -252,11 +266,13 @@ namespace Kudurescue.Tests
             return _found;
         }
 
+        /// <summary>The file found with this name.</summary>
         private static FoundFile Find(string name) =>
             Scan().FirstOrDefault(f => f.Name == name) ?? throw new Exception("not found: " + name + " (found " + string.Join(", ", Scan().Select(f => f.RelativePath)) + ")");
 
         // ================================================================== tests
 
+        /// <summary>Where a file's data is (data runs) is read right.</summary>
         private static void DecodesRunlists()
         {
             var runs = Runlist.Decode(NtfsImage.EncodeRuns(new[] { (1000L, 8L), (900L, 4L), (-1L, 16L), (70000L, 300L) }), 0, 64);
@@ -273,6 +289,7 @@ namespace Kudurescue.Tests
             Check(threw, "zero-length run rejected");
         }
 
+        /// <summary>The boot sector is read right.</summary>
         private static void ReadsBootSector()
         {
             var sector = File.ReadAllBytes(Image()).Take(512).ToArray();
@@ -285,6 +302,7 @@ namespace Kudurescue.Tests
             Check(NtfsBoot.IsBitLocker(bad) && !NtfsBoot.IsNtfs(bad), "BitLocker detected");
         }
 
+        /// <summary>Records' check bytes are put right, and torn records left out.</summary>
         private static void Fixups()
         {
             var data = File.ReadAllBytes(Image());
@@ -296,6 +314,7 @@ namespace Kudurescue.Tests
             Check(FileRecord.Parse(torn, (int)(NtfsImage.MftLcn * NtfsImage.Cluster + 38 * NtfsImage.RecordSize), NtfsImage.RecordSize, 38) == null, "torn record rejected");
         }
 
+        /// <summary>NTFS-compressed data is unpacked right.</summary>
         private static void DecompressesLznt1()
         {
             var text = Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("abcabcabcabcabc-the quick brown fox-", 300)));
@@ -310,6 +329,7 @@ namespace Kudurescue.Tests
             Check(Lznt1.Decompress(stored, stored.Length, 8192).Take(5000).SequenceEqual(random), "stored chunks");
         }
 
+        /// <summary>Deleted files are found with their folders.</summary>
         private static void FindsDeletedFiles()
         {
             var names = Scan().Select(f => f.RelativePath).ToList();
@@ -333,6 +353,7 @@ namespace Kudurescue.Tests
             Equal(FileKind.Videos, Find("split record.mp4").Kind, "kind from extension");
         }
 
+        /// <summary>Each file's chance is right (whole, in part, lost).</summary>
         private static void RecoveryChances()
         {
             Equal(Chance.Excellent, Find("IMG_0001.JPG").Chance, "free clusters");
@@ -346,6 +367,7 @@ namespace Kudurescue.Tests
             Equal(Chance.Excellent, Find("compressed.txt").Chance, "compressed");
         }
 
+        /// <summary>Recovering gives back the same bytes: split, sparse, compressed and big files too.</summary>
         private static void RecoversFiles()
         {
             var dest = Path.Combine(_temp, "recovered");
@@ -380,6 +402,7 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>Recovered files get names Windows accepts (no reserved characters or device names).</summary>
         private static void RecoveryNaming()
         {
             Equal("a_b_c.txt", Recovery.SafeName("a:b?c.txt"), "reserved characters");
@@ -398,6 +421,7 @@ namespace Kudurescue.Tests
             Equal(8L, pieces[2].Length, "cut end");
         }
 
+        /// <summary>A found file can be read in place from any position.</summary>
         private static void ReadsInPlace()
         {
             using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
@@ -419,6 +443,7 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>A repaired copy is written next to the file.</summary>
         private static void RepairedCopy()
         {
             var folder = Path.Combine(_temp, "repaired-copy");
@@ -440,6 +465,7 @@ namespace Kudurescue.Tests
             Check(Repair.CanTry(".JPG") && Repair.CanTry(".docx") && Repair.CanTry(".xlsx") && Repair.CanTry(".pptx") && !Repair.CanTry(".doc"), "the kinds repaired");
         }
 
+        /// <summary>The Recycle Bin's files are read with their names.</summary>
         private static void ReadsRecycleBin()
         {
             var path = @"C:\Users\Azeem\Documents\Budget 2026.xlsx";
@@ -478,6 +504,7 @@ namespace Kudurescue.Tests
             Equal("sheet", File.ReadAllText(Path.Combine(dest, "Users", "Azeem", "Documents", "Budget 2026.xlsx")), "restored from the bin");
         }
 
+        /// <summary>Files are grouped by kind.</summary>
         private static void GroupsFiles()
         {
             Equal(FileKind.Photos, FileKinds.Of("IMG.CR2"), "camera raw");
@@ -490,6 +517,7 @@ namespace Kudurescue.Tests
             Equal("Email & contacts", FileKinds.Label(FileKind.Email), "label");
         }
 
+        /// <summary>Clusters used now by other files are counted.</summary>
         private static void CountsClusters()
         {
             using (var volume = NtfsVolume.Open(new ImageDevice(Image())))
@@ -502,6 +530,7 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>FAT32's deleted files are found, with long names.</summary>
         private static void Fat32()
         {
             var img = new Fat32Image();
@@ -573,6 +602,7 @@ namespace Kudurescue.Tests
             Equal(Chance.Unsure, F("notes.txt").Chance, "can't tell: probably");
         }
 
+        /// <summary>exFAT's deleted files are found.</summary>
         private static void ExFat()
         {
             var img = new ExFatImage();
@@ -635,6 +665,7 @@ namespace Kudurescue.Tests
             Check(File.ReadAllBytes(Path.Combine(dest, "A rather long file name.txt")).SequenceEqual(longName), "name over two entries");
         }
 
+        /// <summary>Each kind of file is told by its first bytes.</summary>
         private static void RecognisesTypes()
         {
             Equal(true, Signatures.Matches(".jpg", new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0 }), "jpeg");
@@ -642,6 +673,7 @@ namespace Kudurescue.Tests
             Equal((bool?)null, Signatures.Matches(".xyz", new byte[8]), "unknown type");
         }
 
+        /// <summary>The deep scan finds files of every kind with their lengths.</summary>
         private static void DeepScanFindsFiles()
         {
             var samples = new List<(string Ext, byte[] Data)>
@@ -700,6 +732,7 @@ namespace Kudurescue.Tests
             Check(found.First(f => f.Extension == ".jpg").Folder == @"Photos\JPG" && found.First(f => f.Extension == ".jpg").Name == "Photo 0001.jpg", "named and grouped by type");
         }
 
+        /// <summary>The deep scan reads only the free space.</summary>
         private static void DeepScanFreeSpace()
         {
             var img = new NtfsImage();
@@ -720,6 +753,7 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>A FAT32 image's bytes.</summary>
         private static byte[] Fat32Bytes()
         {
             var img = new Fat32Image();
@@ -730,6 +764,7 @@ namespace Kudurescue.Tests
             return img.Data;
         }
 
+        /// <summary>A disk image's partitions are found.</summary>
         private static void ImagePartitions()
         {
             var fat = Fat32Bytes();
@@ -790,9 +825,12 @@ namespace Kudurescue.Tests
                 Equal("NTFS", DriveImages.Partitions(device).Single().Format, "whole-volume image");
         }
 
+        /// <summary>A 4-byte number, largest byte first.</summary>
         private static byte[] BE(uint v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+        /// <summary>An 8-byte number, largest byte first.</summary>
         private static byte[] BE(ulong v) => BE((uint)(v >> 32)).Concat(BE((uint)v)).ToArray();
 
+        /// <summary>A VHD file's footer.</summary>
         private static byte[] VhdFooter(long size, uint type, long dataOffset)
         {
             var f = new byte[512];
@@ -804,6 +842,7 @@ namespace Kudurescue.Tests
             return f;
         }
 
+        /// <summary>Fixed and growing VHD files are read.</summary>
         private static void VhdFiles()
         {
             var raw = File.ReadAllBytes(Image());
@@ -857,6 +896,7 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>A drive is copied to an image byte for byte.</summary>
         private static void CopiesDrive()
         {
             var target = Path.Combine(_temp, "copy.img");
@@ -865,6 +905,7 @@ namespace Kudurescue.Tests
             Check(File.ReadAllBytes(target).SequenceEqual(File.ReadAllBytes(Image())), "the copy is identical");
         }
 
+        /// <summary>Scans are saved and opened again.</summary>
         private static void SavedScans()
         {
             var path = Path.Combine(_temp, "saved" + SavedScan.Extension);
@@ -896,6 +937,7 @@ namespace Kudurescue.Tests
             Check(threw, "rubbish is refused");
         }
 
+        /// <summary>A deep scan goes on from where it stopped.</summary>
         private static void DeepResume()
         {
             var path = Path.Combine(_temp, "raw.img");
@@ -919,6 +961,7 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>A Previous Version's changed and deleted files are found.</summary>
         private static void SnapshotCompare()
         {
             var snap = Path.Combine(_temp, "snap");

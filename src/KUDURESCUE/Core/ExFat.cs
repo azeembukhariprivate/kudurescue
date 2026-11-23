@@ -1,3 +1,5 @@
+// Reading exFAT (memory cards, USB drives): its boot sector, the cluster map and table, and the folder entries, deleted
+// ones too.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,31 +17,49 @@ namespace Kudurescue.Core
     /// </summary>
     public sealed class ExFatVolume : IVolume, IFreeSpace
     {
+        /// <summary>How much of the table or map is read at a time (1 MB).</summary>
         private const int PageBytes = 1 << 20;
+        /// <summary>True when closing this closes the drive.</summary>
         private readonly bool _ownsDevice;
+        /// <summary>Pages of the cluster table read.</summary>
         private readonly Dictionary<long, byte[]> _fatPages = new Dictionary<long, byte[]>();
+        /// <summary>Pages of the used-cluster map read.</summary>
         private readonly Dictionary<long, byte[]> _bitmapPages = new Dictionary<long, byte[]>();
+        /// <summary>Where the used-cluster map is.</summary>
         private List<long> _bitmapClusters = new List<long>();
+        /// <summary>How big it is.</summary>
         private long _bitmapLength;
 
+        /// <summary>An exFAT drive (made by Open).</summary>
         private ExFatVolume(IBlockDevice device, bool ownsDevice)
         {
             Device = device;
             _ownsDevice = ownsDevice;
         }
 
+        /// <summary>The drive.</summary>
         public IBlockDevice Device { get; }
+        /// <summary>The file system's name.</summary>
         public string FormatName => "exFAT";
+        /// <summary>How big a sector is.</summary>
         public int BytesPerSector { get; private set; }
+        /// <summary>How big a cluster is.</summary>
         public int ClusterSize { get; private set; }
+        /// <summary>Where the cluster table starts, in bytes.</summary>
         public long FatOffset { get; private set; }     // bytes
+        /// <summary>Where the clusters start, in bytes.</summary>
         public long HeapOffset { get; private set; }    // bytes
+        /// <summary>How many clusters there are.</summary>
         public long ClusterCount { get; private set; }
+        /// <summary>The top folder's first cluster.</summary>
         public long RootCluster { get; private set; }
+        /// <summary>The last cluster's number.</summary>
         public long MaxCluster => ClusterCount + 1;
 
+        /// <summary>Where a cluster starts, in bytes.</summary>
         public long ClusterOffset(long cluster) => HeapOffset + (cluster - 2) * ClusterSize;
 
+        /// <summary>Opens a drive as exFAT, or null when it isn't.</summary>
         public static ExFatVolume Open(IBlockDevice device, bool ownsDevice = true)
         {
             var s = new byte[Math.Max(512, device.SectorSize)];
@@ -63,6 +83,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ FAT and allocation bitmap
 
+        /// <summary>A cluster's entry in the table (the next cluster of its file).</summary>
         public uint Entry(long cluster)
         {
             if (cluster < 0 || cluster > MaxCluster) return 0xFFFFFFF7;
@@ -72,6 +93,7 @@ namespace Kudurescue.Core
             return i + 4 <= page.Length ? BitConverter.ToUInt32(page, i) : 0xFFFFFFF7;
         }
 
+        /// <summary>A file's clusters, following the table from its first.</summary>
         public List<long> Chain(long first, long limit = 1 << 20)
         {
             var list = new List<long>();
@@ -102,6 +124,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>True when a cluster is used now.</summary>
         public bool IsUsed(long cluster)
         {
             if (cluster < 2 || cluster > MaxCluster) return true;
@@ -113,6 +136,7 @@ namespace Kudurescue.Core
             return i >= page.Length || (page[i] & (1 << (int)(bit % 8))) != 0;
         }
 
+        /// <summary>The free ranges of the drive.</summary>
         public IEnumerable<(long Start, long Length)> FreeRanges()
         {
             long start = -1;
@@ -128,6 +152,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>How many of a run of clusters are used now (by other files).</summary>
         public long CountUsed(long cluster, long length)
         {
             long used = 0;
@@ -166,6 +191,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Reads these clusters.</summary>
         private byte[] ReadClusters(IList<long> clusters)
         {
             var data = new byte[clusters.Count * (long)ClusterSize];
@@ -173,6 +199,7 @@ namespace Kudurescue.Core
             return data;
         }
 
+        /// <summary>A run of clusters one after another.</summary>
         private List<long> Contiguous(long first, long count)
         {
             var list = new List<long>();
@@ -184,24 +211,37 @@ namespace Kudurescue.Core
 
         private sealed class Folder
         {
+            /// <summary>The folder's path.</summary>
             public string Path;
+            /// <summary>Its clusters.</summary>
             public List<long> Clusters;
+            /// <summary>True when it was deleted.</summary>
             public bool Deleted;
         }
 
         internal sealed class EntrySet
         {
+            /// <summary>The name.</summary>
             public string Name;
+            /// <summary>True when it was deleted.</summary>
             public bool Deleted;
+            /// <summary>True for a folder.</summary>
             public bool IsFolder;
+            /// <summary>Its first cluster.</summary>
             public long FirstCluster;
+            /// <summary>True when its clusters are one after another (not in the table).</summary>
             public bool NoFatChain;
+            /// <summary>Its size.</summary>
             public long Size;
+            /// <summary>How much of it was written.</summary>
             public long ValidSize;
+            /// <summary>When it was made.</summary>
             public DateTime Created;
+            /// <summary>When it was last changed.</summary>
             public DateTime Modified;
         }
 
+        /// <summary>Lists every file, deleted ones too, folder by folder.</summary>
         public void Scan(QuickScan scan, CancellationToken cancel)
         {
             scan.ProgressLabel = "Folders";
@@ -312,6 +352,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A file found, with its chance of coming back whole.</summary>
         private FoundFile Describe(EntrySet s, string folder)
         {
             if (s.Size < 0 || s.Size > Device.Length) return null;
@@ -347,6 +388,7 @@ namespace Kudurescue.Core
             return f;
         }
 
+        /// <summary>Clusters as runs of clusters one after another.</summary>
         public static List<DataRun> ToRuns(List<long> clusters)
         {
             var runs = new List<DataRun>();
@@ -360,6 +402,7 @@ namespace Kudurescue.Core
             return runs;
         }
 
+        /// <summary>Closes the drive when it's this one's own.</summary>
         public void Dispose()
         {
             if (_ownsDevice) Device.Dispose();

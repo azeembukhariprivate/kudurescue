@@ -1,3 +1,5 @@
+// The drives on this PC: their letter, name, file system, size, free room, kind (SSD, hard disk, USB, memory card) and
+// whether TRIM is on.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -7,22 +9,35 @@ using System.Text;
 
 namespace Kudurescue.Core
 {
+    /// <summary>What kind of drive it is.</summary>
     public enum DriveKind { InternalSsd, InternalHdd, Usb, MemoryCard, Virtual, Other }
 
     public sealed class DriveDetails
     {
+        /// <summary>Its letter, like "D:".</summary>
         public string Letter { get; set; }  // "D:"
+        /// <summary>Its name.</summary>
         public string Label { get; set; }
+        /// <summary>Its file system.</summary>
         public string Format { get; set; }
+        /// <summary>How big it is.</summary>
         public long Size { get; set; }
+        /// <summary>How much room is free.</summary>
         public long Free { get; set; }
+        /// <summary>What kind of drive.</summary>
         public DriveKind Kind { get; set; }
+        /// <summary>True when TRIM is on (an SSD wipes deleted files soon, so less can be found).</summary>
         public bool Trim { get; set; }
+        /// <summary>True for the Windows drive.</summary>
         public bool IsSystem { get; set; }
+        /// <summary>The drive's make and model.</summary>
         public string Product { get; set; }
 
+        /// <summary>Its top folder.</summary>
         public string Root => Letter + "\\";
+        /// <summary>True for NTFS.</summary>
         public bool IsNtfs => string.Equals(Format, "NTFS", StringComparison.OrdinalIgnoreCase);
+        /// <summary>True for FAT12, FAT16 or FAT32.</summary>
         public bool IsFat => Format != null && (Format.StartsWith("FAT", StringComparison.OrdinalIgnoreCase) || Format.Equals("exFAT", StringComparison.OrdinalIgnoreCase));
 
         /// <summary>SSDs with TRIM wipe deleted data soon after deletion, so there's little left to find.</summary>
@@ -44,11 +59,13 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Its name as shown.</summary>
         public string Title => string.IsNullOrWhiteSpace(Label) ? (string.IsNullOrWhiteSpace(Product) ? KindText : Product) : Label;
     }
 
     public static class Drives
     {
+        /// <summary>Every drive that can be looked at.</summary>
         public static List<DriveDetails> List()
         {
             var list = new List<DriveDetails>();
@@ -118,6 +135,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Asks a drive for some of its details.</summary>
         private static byte[] Query(Microsoft.Win32.SafeHandles.SafeFileHandle handle, int propertyId, int size)
         {
             var query = new byte[12];
@@ -127,6 +145,7 @@ namespace Kudurescue.Core
                 ? output.Take(returned).ToArray() : null;
         }
 
+        /// <summary>A text inside a drive's answer.</summary>
         private static string ReadString(byte[] data, int offset)
         {
             if (offset <= 0 || offset >= data.Length) return null;

@@ -1,3 +1,5 @@
+// Reading NTFS: the boot sector, where a file's data is (data runs), file records and their attributes, and NTFS's own
+// compression (LZNT1).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -14,8 +16,10 @@ namespace Kudurescue.Core
         [System.Runtime.Serialization.DataMember] public long Lcn;
         [System.Runtime.Serialization.DataMember] public long Length;
 
+        /// <summary>True for a part with no data on the drive (all zeros).</summary>
         public bool IsSparse => Lcn < 0;
 
+        /// <summary>A run of clusters.</summary>
         public DataRun(long vcn, long lcn, long length)
         {
             Vcn = vcn;
@@ -23,6 +27,7 @@ namespace Kudurescue.Core
             Length = length;
         }
 
+        /// <summary>A short description for the tests.</summary>
         public override string ToString() => IsSparse ? $"sparse×{Length}" : $"{Lcn}×{Length}";
     }
 
@@ -69,21 +74,33 @@ namespace Kudurescue.Core
 
     public sealed class NtfsBoot
     {
+        /// <summary>How big a sector is.</summary>
         public int BytesPerSector { get; private set; }
+        /// <summary>How many sectors make a cluster.</summary>
         public int SectorsPerCluster { get; private set; }
+        /// <summary>How many sectors the drive has.</summary>
         public long TotalSectors { get; private set; }
+        /// <summary>Where the file table starts, in clusters.</summary>
         public long MftLcn { get; private set; }
+        /// <summary>Where its spare copy starts.</summary>
         public long MftMirrLcn { get; private set; }
+        /// <summary>How big each file record is.</summary>
         public int RecordSize { get; private set; }
+        /// <summary>The drive's serial number.</summary>
         public ulong Serial { get; private set; }
 
+        /// <summary>How big a cluster is, in bytes.</summary>
         public int ClusterSize => BytesPerSector * SectorsPerCluster;
+        /// <summary>How many clusters the drive has.</summary>
         public long TotalClusters => TotalSectors / SectorsPerCluster;
 
+        /// <summary>True when the first sector says NTFS.</summary>
         public static bool IsNtfs(byte[] sector) => sector.Length >= 512 && Encoding.ASCII.GetString(sector, 3, 8) == "NTFS    ";
 
+        /// <summary>True when the drive is locked with BitLocker.</summary>
         public static bool IsBitLocker(byte[] sector) => sector.Length >= 512 && Encoding.ASCII.GetString(sector, 3, 8) == "-FVE-FS-";
 
+        /// <summary>Reads the boot sector.</summary>
         public static NtfsBoot Parse(byte[] s)
         {
             if (!IsNtfs(s)) throw new InvalidDataException("This drive isn't formatted as NTFS.");
@@ -117,10 +134,15 @@ namespace Kudurescue.Core
 
     public sealed class NtfsAttribute
     {
+        /// <summary>What kind of attribute it is.</summary>
         public AttrType Type;
+        /// <summary>Its name (empty for most).</summary>
         public string Name = string.Empty;
+        /// <summary>True when its data is kept outside the record.</summary>
         public bool NonResident;
+        /// <summary>Its flags (compressed, encrypted, sparse).</summary>
         public ushort Flags;
+        /// <summary>Its id in the record.</summary>
         public ushort Id;
 
         // Resident
@@ -128,41 +150,65 @@ namespace Kudurescue.Core
 
         // Non-resident
         public long StartVcn;
+        /// <summary>The last cluster it covers.</summary>
         public long LastVcn;
+        /// <summary>How many clusters are compressed together.</summary>
         public int CompressionUnit;
+        /// <summary>How much room it takes on the drive.</summary>
         public long AllocatedSize;
+        /// <summary>How big its data is.</summary>
         public long DataSize;
+        /// <summary>How much of the data has been written.</summary>
         public long InitializedSize;
+        /// <summary>Where its data is on the drive.</summary>
         public List<DataRun> Runs;
 
+        /// <summary>True when compressed.</summary>
         public bool Compressed => (Flags & 0x0001) != 0;
+        /// <summary>True when encrypted.</summary>
         public bool Encrypted => (Flags & 0x4000) != 0;
+        /// <summary>True when sparse (parts with no data take no room).</summary>
         public bool Sparse => (Flags & 0x8000) != 0;
     }
 
     public sealed class FileNameInfo
     {
+        /// <summary>The record of the folder it's in.</summary>
         public long ParentRecord;
+        /// <summary>That folder's sequence number.</summary>
         public int ParentSequence;
+        /// <summary>The name.</summary>
         public string Name;
+        /// <summary>Which kind of name it is.</summary>
         public int Namespace; // 0 POSIX, 1 Win32, 2 DOS, 3 Win32 and DOS
+        /// <summary>When it was made.</summary>
         public DateTime Created;
+        /// <summary>When it was last changed.</summary>
         public DateTime Modified;
+        /// <summary>The file's size as noted with the name.</summary>
         public long RealSize;
     }
 
     /// <summary>One MFT record (FILE record) with its attributes.</summary>
     public sealed class FileRecord
     {
+        /// <summary>Its number in the file table.</summary>
         public long Number;
+        /// <summary>How many times the record was used (to tell old records from new).</summary>
         public int Sequence;
+        /// <summary>True when it's in use.</summary>
         public bool InUse;
+        /// <summary>True for a folder.</summary>
         public bool IsDirectory;
+        /// <summary>The main record, for an extra record of a big file (0 for a main record).</summary>
         public long BaseRecord;
+        /// <summary>Its attributes.</summary>
         public readonly List<NtfsAttribute> Attributes = new List<NtfsAttribute>();
 
+        /// <summary>True for an extra record.</summary>
         public bool IsExtension => BaseRecord != 0;
 
+        /// <summary>The first attribute of this kind (and name), or null.</summary>
         public NtfsAttribute Find(AttrType type, string name = "") =>
             Attributes.FirstOrDefault(a => a.Type == type && string.Equals(a.Name, name, StringComparison.Ordinal));
 
@@ -182,6 +228,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>When it was made and last changed, from its standard attribute.</summary>
         public void StandardTimes(out DateTime created, out DateTime modified)
         {
             created = modified = DateTime.MinValue;
@@ -191,12 +238,14 @@ namespace Kudurescue.Core
             modified = FileTime(BitConverter.ToInt64(si.Value, 8));
         }
 
+        /// <summary>A Windows file time as a date.</summary>
         public static DateTime FileTime(long ft)
         {
             try { return ft > 0 && ft < 2650467743999999999 ? DateTime.FromFileTimeUtc(ft) : DateTime.MinValue; }
             catch { return DateTime.MinValue; }
         }
 
+        /// <summary>Reads a file name attribute's value.</summary>
         public static FileNameInfo ParseFileName(byte[] v)
         {
             if (v.Length < 66) return null;
@@ -256,6 +305,7 @@ namespace Kudurescue.Core
             return r;
         }
 
+        /// <summary>Reads one attribute of a record.</summary>
         private static NtfsAttribute ParseAttribute(byte[] d, int p, int length)
         {
             var a = new NtfsAttribute

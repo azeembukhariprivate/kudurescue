@@ -1,3 +1,5 @@
+// Reading FAT12, FAT16 and FAT32: the boot sector, the cluster table, and the folder entries, deleted ones too (with
+// their long names when they're still there).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -9,22 +11,38 @@ namespace Kudurescue.Core
 {
     public sealed class FatBoot
     {
+        /// <summary>How big a sector is.</summary>
         public int BytesPerSector { get; private set; }
+        /// <summary>How many sectors make a cluster.</summary>
         public int SectorsPerCluster { get; private set; }
+        /// <summary>How many sectors come before the tables.</summary>
         public int ReservedSectors { get; private set; }
+        /// <summary>How many copies of the table there are.</summary>
         public int FatCount { get; private set; }
+        /// <summary>How many entries the top folder has (FAT12 and FAT16).</summary>
         public int RootEntries { get; private set; }
+        /// <summary>How many sectors the drive has.</summary>
         public long TotalSectors { get; private set; }
+        /// <summary>How many sectors each table takes.</summary>
         public long FatSectors { get; private set; }
+        /// <summary>The top folder's first cluster (FAT32).</summary>
         public long RootCluster { get; private set; }
+        /// <summary>12, 16 or 32.</summary>
         public int Type { get; private set; } // 12, 16 or 32
 
+        /// <summary>How big a cluster is, in bytes.</summary>
         public int ClusterSize => BytesPerSector * SectorsPerCluster;
+        /// <summary>How many sectors the top folder takes (FAT12 and FAT16).</summary>
         public long RootDirSectors => (RootEntries * 32L + BytesPerSector - 1) / BytesPerSector;
+        /// <summary>Where the table starts, in bytes.</summary>
         public long FatStart => (long)ReservedSectors * BytesPerSector;
+        /// <summary>Where the top folder starts (FAT12 and FAT16).</summary>
         public long RootDirStart => (ReservedSectors + FatCount * FatSectors) * BytesPerSector;
+        /// <summary>The first sector of the clusters.</summary>
         public long FirstDataSector => ReservedSectors + FatCount * FatSectors + RootDirSectors;
+        /// <summary>How many clusters there are.</summary>
         public long ClusterCount => (TotalSectors - FirstDataSector) / SectorsPerCluster;
+        /// <summary>The last cluster's number.</summary>
         public long MaxCluster => ClusterCount + 1;
 
         /// <summary>A quick check that a boot sector looks like FAT (before parsing it fully).</summary>
@@ -37,6 +55,7 @@ namespace Kudurescue.Core
                    BitConverter.ToUInt16(s, 14) > 0 && s[16] >= 1 && s[16] <= 2;
         }
 
+        /// <summary>Reads the boot sector (null when it isn't FAT).</summary>
         public static FatBoot Parse(byte[] s)
         {
             if (!Looks(s)) throw new InvalidDataException("This drive isn't formatted as FAT.");
@@ -73,10 +92,14 @@ namespace Kudurescue.Core
     /// </summary>
     public sealed class FatVolume : IVolume, IFreeSpace
     {
+        /// <summary>How much of the table is read at a time (1 MB).</summary>
         private const int PageBytes = 1 << 20;
+        /// <summary>True when closing this closes the drive.</summary>
         private readonly bool _ownsDevice;
+        /// <summary>Pages of the table read.</summary>
         private readonly Dictionary<long, byte[]> _pages = new Dictionary<long, byte[]>();
 
+        /// <summary>A FAT drive (made by Open).</summary>
         private FatVolume(IBlockDevice device, FatBoot boot, bool ownsDevice)
         {
             Device = device;
@@ -84,13 +107,19 @@ namespace Kudurescue.Core
             _ownsDevice = ownsDevice;
         }
 
+        /// <summary>The drive.</summary>
         public IBlockDevice Device { get; }
+        /// <summary>Its boot sector.</summary>
         public FatBoot Boot { get; }
+        /// <summary>The file system's name, like "FAT32".</summary>
         public string FormatName => "FAT" + Boot.Type;
+        /// <summary>How big a cluster is.</summary>
         public int ClusterSize => Boot.ClusterSize;
 
+        /// <summary>Where a cluster starts, in bytes.</summary>
         public long ClusterOffset(long cluster) => (Boot.FirstDataSector + (cluster - 2) * Boot.SectorsPerCluster) * Boot.BytesPerSector;
 
+        /// <summary>Opens a drive as FAT, or null when it isn't.</summary>
         public static FatVolume Open(IBlockDevice device, bool ownsDevice = true)
         {
             var sector = new byte[Math.Max(512, device.SectorSize)];
@@ -114,6 +143,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>The free ranges of the drive.</summary>
         public IEnumerable<(long Start, long Length)> FreeRanges()
         {
             long start = -1;
@@ -129,8 +159,10 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>True when a table entry ends a file.</summary>
         private bool IsEnd(uint entry) => entry >= (Boot.Type == 32 ? 0x0FFFFFF8u : Boot.Type == 16 ? 0xFFF8u : 0xFF8u);
 
+        /// <summary>How many of a run of clusters are used now (by other files).</summary>
         public long CountUsed(long cluster, long length)
         {
             long used = 0;
@@ -138,6 +170,7 @@ namespace Kudurescue.Core
             return used;
         }
 
+        /// <summary>A number in the table.</summary>
         private uint ReadUInt(long offset, int size)
         {
             uint v = 0;
@@ -145,6 +178,7 @@ namespace Kudurescue.Core
             return v;
         }
 
+        /// <summary>One byte of the table.</summary>
         private byte FatByte(long offset)
         {
             var index = offset / PageBytes;
@@ -181,6 +215,7 @@ namespace Kudurescue.Core
             return list;
         }
 
+        /// <summary>Reads these clusters.</summary>
         private byte[] ReadClusters(IList<long> clusters)
         {
             var data = new byte[clusters.Count * ClusterSize];
@@ -192,11 +227,15 @@ namespace Kudurescue.Core
 
         private sealed class Folder
         {
+            /// <summary>The folder's path.</summary>
             public string Path;
+            /// <summary>Its first cluster (0 for the FAT12/16 top folder area).</summary>
             public long Cluster;      // 0 = FAT12/16 root area
+            /// <summary>True when it was deleted.</summary>
             public bool Deleted;
         }
 
+        /// <summary>Lists every file, deleted ones too, folder by folder.</summary>
         public void Scan(QuickScan scan, CancellationToken cancel)
         {
             scan.ProgressLabel = "Folders";
@@ -234,8 +273,10 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A folder and a name joined.</summary>
         private static string Join(string folder, string name) => folder.Length == 0 ? name : folder + "\\" + name;
 
+        /// <summary>A folder's entries as bytes.</summary>
         private byte[] FolderData(Folder folder)
         {
             if (folder.Cluster == 0)
@@ -258,6 +299,7 @@ namespace Kudurescue.Core
             return ReadClusters(clusters);
         }
 
+        /// <summary>True when the data ends the folder (an entry starting with 0).</summary>
         private static bool EndsFolder(byte[] data)
         {
             for (var p = 0; p + 32 <= data.Length; p += 32) if (data[p] == 0) return true;
@@ -266,14 +308,23 @@ namespace Kudurescue.Core
 
         internal sealed class DirEntry
         {
+            /// <summary>The name.</summary>
             public string Name;
+            /// <summary>True when it was deleted.</summary>
             public bool Deleted;
+            /// <summary>True for a folder.</summary>
             public bool IsFolder;
+            /// <summary>Its first cluster.</summary>
             public long Cluster;
+            /// <summary>True when its first cluster's top half was guessed (FAT32 clears it on delete).</summary>
             public bool ClusterGuessed;
+            /// <summary>Its size.</summary>
             public long Size;
+            /// <summary>When it was made.</summary>
             public DateTime Created;
+            /// <summary>When it was last changed.</summary>
             public DateTime Modified;
+            /// <summary>True when the name's first letter is lost (FAT overwrites it on delete).</summary>
             public bool UnsureName;
         }
 
@@ -323,6 +374,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>The long name from its parts (or null when they don't fit the short name).</summary>
         private static string LongName(List<byte[]> parts, byte[] shortName, bool deleted)
         {
             if (parts.Count == 0) return null;
@@ -354,6 +406,7 @@ namespace Kudurescue.Core
             return name.Length == 0 ? null : name;
         }
 
+        /// <summary>The short (8.3) name, with "_" for a deleted file's lost first letter.</summary>
         private static string ShortName(byte[] raw, byte caseFlags, bool deleted, List<byte[]> parts, out bool unsure)
         {
             var bytes = (byte[])raw.Clone();
@@ -373,6 +426,7 @@ namespace Kudurescue.Core
             return ext.Length > 0 ? stem + "." + ext : stem;
         }
 
+        /// <summary>The short name's checksum, as long name parts keep it.</summary>
         public static byte Checksum(byte[] shortName)
         {
             byte sum = 0;
@@ -380,6 +434,7 @@ namespace Kudurescue.Core
             return sum;
         }
 
+        /// <summary>A DOS date and time as a date.</summary>
         private static DateTime DosTime(ushort date, ushort time)
         {
             if (date == 0) return DateTime.MinValue;
@@ -404,6 +459,9 @@ namespace Kudurescue.Core
             return own == cluster && first[32] == (byte)'.' && first[33] == (byte)'.';
         }
 
+        /// <summary>
+        /// Guesses a deleted FAT32 folder's first cluster from its lower half (the first that looks like a folder).
+        /// </summary>
         private long GuessFolderCluster(ushort low)
         {
             for (long high = 0; (high << 16) <= Boot.MaxCluster; high++)
@@ -435,6 +493,7 @@ namespace Kudurescue.Core
             return candidates[0];
         }
 
+        /// <summary>A file found, with its chance of coming back whole.</summary>
         private FoundFile Describe(DirEntry e, string folder)
         {
             if (e.Size > 0 && (e.Cluster < 2 || e.Cluster > Boot.MaxCluster)) return null;
@@ -474,6 +533,7 @@ namespace Kudurescue.Core
             return f;
         }
 
+        /// <summary>Closes the drive when it's this one's own.</summary>
         public void Dispose()
         {
             if (_ownsDevice) Device.Dispose();

@@ -1,3 +1,5 @@
+// Checks a recovered file's first bytes against its ending, to tell a whole file from one whose start is now another
+// file's.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,6 +10,7 @@ namespace Kudurescue.Core
     /// <summary>Recognises common file types by their first bytes, to confirm that data really is the file we think it is.</summary>
     public static class Signatures
     {
+        /// <summary>How each kind of file starts.</summary>
         private static readonly Dictionary<string, Func<byte[], bool>> Checks = new Dictionary<string, Func<byte[], bool>>(StringComparer.OrdinalIgnoreCase);
 
         static Signatures()
@@ -47,8 +50,10 @@ namespace Kudurescue.Core
             return check(start);
         }
 
+        /// <summary>True when the bytes start with these.</summary>
         private static bool Starts(byte[] b, params byte[] magic) => b.Length >= magic.Length && !magic.Where((m, i) => b[i] != m).Any();
 
+        /// <summary>True when the bytes at a place are this text.</summary>
         private static bool Ascii(byte[] b, int offset, string text) =>
             b.Length >= offset + text.Length && Encoding.ASCII.GetString(b, offset, text.Length) == text;
     }

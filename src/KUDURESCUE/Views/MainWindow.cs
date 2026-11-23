@@ -1,3 +1,5 @@
+// The main window, step by step: choose a drive (with the Recycle Bin, Previous Versions and disk images), scan with
+// its progress, pick the files found, and recover them.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -17,27 +19,38 @@ namespace Kudurescue.Views
     /// <summary>The main window: four steps (choose a drive, scan, pick files, recover) in one window.</summary>
     public sealed partial class MainWindow : Window
     {
+        /// <summary>The steps' names, shown at the top.</summary>
         private static readonly string[] StepNames = { "Choose a drive", "Scan", "Pick files", "Recover" };
 
+        /// <summary>The steps at the top.</summary>
         private readonly StackPanel _steps = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        /// <summary>Where the page shown is.</summary>
         private readonly ContentControl _page = new ContentControl { Focusable = false };
+        /// <summary>The bar at the bottom.</summary>
         private readonly Grid _footer = new Grid();
+        /// <summary>The bar's border.</summary>
         private readonly Border _footerBar;
+        /// <summary>"A new version is out", shown when there is one.</summary>
         private readonly Button _update = Ui.Link(string.Empty, (s, e) => AppInfo.OpenUrl(AppInfo.ReleasesUrl + "/latest"));
+        /// <summary>The step shown.</summary>
         private int _step;
 
         // Choose a drive
         private List<DriveDetails> _drives = new List<DriveDetails>();
+        /// <summary>The drive chosen.</summary>
         private DriveDetails _drive;
+        /// <summary>Each drive's Recycle Bin, once listed.</summary>
         private readonly Dictionary<string, List<FoundFile>> _binCache = new Dictionary<string, List<FoundFile>>();
 
         // Scan
         private QuickScan _scan;
+        /// <summary>Updates the scan's progress.</summary>
         private DispatcherTimer _timer;
 
         // Pick files and recover
         private ResultsView _results;
 
+        /// <summary>Makes the main window and shows the drives.</summary>
         public MainWindow()
         {
             Width = 1120;
@@ -89,13 +102,18 @@ namespace Kudurescue.Views
             };
         }
 
+        /// <summary>The step shown (for the self-test).</summary>
         public int Step => _step;
+        /// <summary>The results page.</summary>
         public ResultsView Results => _results;
+        /// <summary>The scan going on.</summary>
         public QuickScan CurrentScan => _scan;
+        /// <summary>The drives listed.</summary>
         public IReadOnlyList<DriveDetails> DriveList => _drives;
 
         // ================================================================== frame
 
+        /// <summary>Goes to a step and marks it at the top.</summary>
         private void SetStep(int step)
         {
             _step = step;
@@ -142,9 +160,11 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>Content that scrolls.</summary>
         private static ScrollViewer Scroll(UIElement content) =>
             new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Focusable = false };
 
+        /// <summary>Goes back to choosing a drive (asking first when files were found).</summary>
         private void StartAgain()
         {
             if (_results != null && _results.IsRecovering) return;
@@ -162,6 +182,7 @@ namespace Kudurescue.Views
 
         // ================================================================== 1. choose a drive
 
+        /// <summary>Shows the drives.</summary>
         internal void ShowDrives()
         {
             SetStep(0);
@@ -212,6 +233,7 @@ namespace Kudurescue.Views
             RefreshDriveFooter();
         }
 
+        /// <summary>A drive's card: its name, kind, size, and what's said about it.</summary>
         private UIElement DriveCard(DriveDetails d)
         {
             var radio = new RadioButton { GroupName = "drive", IsChecked = d == _drive }.Styled("OptionCard");
@@ -246,6 +268,7 @@ namespace Kudurescue.Views
             return radio;
         }
 
+        /// <summary>The chips under a drive: its kind, its file system, Windows, TRIM.</summary>
         private static IEnumerable<FrameworkElement> DriveChips(DriveDetails d)
         {
             if (d.Size <= 0) { yield return Ui.Chip("Unreadable or locked: Deep scan can still search it", Tone.Bad); yield break; }
@@ -255,6 +278,7 @@ namespace Kudurescue.Views
             if (d.IsSystem) yield return Ui.Chip("Windows drive: use the PC as little as possible", Tone.Neutral);
         }
 
+        /// <summary>Shows the drives again, keeping the place.</summary>
         private void ShowDrivesKeepingScroll()
         {
             var offset = (_page.Content as ScrollViewer)?.VerticalOffset ?? 0;
@@ -262,6 +286,7 @@ namespace Kudurescue.Views
             Dispatcher.BeginInvoke(new Action(() => (_page.Content as ScrollViewer)?.ScrollToVerticalOffset(offset)), DispatcherPriority.Loaded);
         }
 
+        /// <summary>Fills what's in the drive's Recycle Bin.</summary>
         private void FillRecycleBin(StackPanel panel)
         {
             panel.Children.Clear();
@@ -285,6 +310,7 @@ namespace Kudurescue.Views
                 .Res(Border.BorderBrushProperty, "BorderBrush"));
         }
 
+        /// <summary>Updates the buttons at the bottom for the drive chosen.</summary>
         private void RefreshDriveFooter()
         {
             var kind = _deep ? "Deep" : "Quick";
@@ -301,6 +327,7 @@ namespace Kudurescue.Views
             SetFooter(warning, start);
         }
 
+        /// <summary>Why a drive can't be scanned (null when it can).</summary>
         private static string ScanBlocker(DriveDetails d, bool deep)
         {
             if (d == null) return "Choose a drive first.";
@@ -312,6 +339,7 @@ namespace Kudurescue.Views
 
         // ================================================================== 2. scan
 
+        /// <summary>Starts a quick scan of the drive chosen.</summary>
         private void StartScan()
         {
             if (_drive == null || ScanBlocker(_drive, _deep) != null) return;
@@ -324,6 +352,7 @@ namespace Kudurescue.Views
             BeginScan(_drive.Letter, _deep);
         }
 
+        /// <summary>True when the scan is a deep scan.</summary>
         private bool _deep;
 
         /// <summary>After restarting as administrator with --scan D:, start straight away.</summary>
@@ -395,12 +424,18 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>The scan page's texts: title, percent, time taken and left, records read, totals.</summary>
         private TextBlock _scanTitle, _percent, _elapsed, _left, _records, _total, _chanceLine;
+        /// <summary>The scan's progress bar.</summary>
         private ProgressBar _scanBar;
+        /// <summary>The files just found, and the counts of each kind.</summary>
         private StackPanel _justFound, _kinds;
+        /// <summary>The bar of chances (whole, in part, lost).</summary>
         private Grid _chanceBar;
+        /// <summary>Pauses or goes on.</summary>
         private Button _pause;
 
+        /// <summary>The scan page.</summary>
         private void ShowScanPage()
         {
             var drive = _drives.FirstOrDefault(d => d.Letter == _scan.Drive);
@@ -454,6 +489,7 @@ namespace Kudurescue.Views
             UpdateScan();
         }
 
+        /// <summary>Updates the scan page, and shows the results when it ends.</summary>
         private void UpdateScan()
         {
             if (_scan == null) return;
@@ -528,6 +564,7 @@ namespace Kudurescue.Views
             ShowResults(files, _scan.Volume, title, false);
         }
 
+        /// <summary>A chip with a file's chance.</summary>
         internal static Border ChanceChip(FoundFile f)
         {
             var tone = f.Chance == Chance.Excellent ? Tone.Ok : f.Chance == Chance.Partial || f.Chance == Chance.Unsure ? Tone.Warn : Tone.Bad;
@@ -536,6 +573,7 @@ namespace Kudurescue.Views
 
         // ================================================================== 3 and 4. pick files, recover
 
+        /// <summary>Shows the files found.</summary>
         internal void ShowResults(List<FoundFile> files, IVolume volume, string title, bool recycleBin)
         {
             var drive = _drive?.Letter ?? _scan?.Drive ?? "C:";
@@ -552,6 +590,7 @@ namespace Kudurescue.Views
             ShowResultsPage();
         }
 
+        /// <summary>Goes back to the files found.</summary>
         internal void ShowResultsPage()
         {
             SetStep(2);
@@ -559,6 +598,7 @@ namespace Kudurescue.Views
             _results.RefreshFooter();
         }
 
+        /// <summary>Shows the recover page.</summary>
         internal void ShowRecoverPage()
         {
             SetStep(3);
@@ -574,6 +614,7 @@ namespace Kudurescue.Views
 
         // ================================================================== updates
 
+        /// <summary>Looks for a new version once (unless switched off) and shows the link when there is one.</summary>
         private async Task CheckForUpdates()
         {
             if (!Settings.CheckForUpdates || SelfTest.Running) return;

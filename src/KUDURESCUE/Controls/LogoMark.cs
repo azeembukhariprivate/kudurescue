@@ -1,3 +1,4 @@
+// The KUDURESCUE logo, drawn in code in the text colour.
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -10,6 +11,7 @@ namespace Kudurescue.Controls
     /// <summary>The KUDURESCUE mark: a lifebuoy around a file. Uses the text colour, with the stripes see-through.</summary>
     public class LogoMark : Viewbox
     {
+        /// <summary>The mark, size pixels wide.</summary>
         public LogoMark(double size = 40)
         {
             Width = size;
@@ -49,6 +51,7 @@ namespace Kudurescue.Controls
             Child = canvas;
         }
 
+        /// <summary>Gives the shape the theme's text colour, following theme changes.</summary>
         private void Bind(Shape shape, DependencyProperty property) =>
             shape.SetBinding(property, new Binding { Path = new PropertyPath(TextElement.ForegroundProperty), Source = this });
     }

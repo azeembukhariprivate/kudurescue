@@ -1,3 +1,4 @@
+// Disk image files: raw images (.img, .dd...), VHD files (fixed and growing), and the partitions inside an image.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,10 +11,14 @@ namespace Kudurescue.Core
     /// <summary>A part of another device, e.g. one partition inside a disk image.</summary>
     public sealed class OffsetDevice : IBlockDevice
     {
+        /// <summary>The drive the part is on.</summary>
         private readonly IBlockDevice _base;
+        /// <summary>Where the part starts on it.</summary>
         private readonly long _offset;
+        /// <summary>True when closing this closes the drive too.</summary>
         private readonly bool _ownsBase;
 
+        /// <summary>A part of a drive, from offset, length bytes long.</summary>
         public OffsetDevice(IBlockDevice device, long offset, long length, string name, bool ownsBase)
         {
             _base = device;
@@ -23,16 +28,21 @@ namespace Kudurescue.Core
             _ownsBase = ownsBase;
         }
 
+        /// <summary>Its name.</summary>
         public string Name { get; }
+        /// <summary>How big it is.</summary>
         public long Length { get; }
+        /// <summary>How big a sector is.</summary>
         public int SectorSize => _base.SectorSize;
 
+        /// <summary>Reads bytes from a place in the part.</summary>
         public void Read(long offset, byte[] buffer, int index, int count)
         {
             if (offset < 0 || offset + count > Length) throw new IOException($"Read past the end of {Name}.");
             _base.Read(_offset + offset, buffer, index, count);
         }
 
+        /// <summary>Closes the drive when it's this one's own.</summary>
         public void Dispose()
         {
             if (_ownsBase) _base.Dispose();
@@ -45,12 +55,18 @@ namespace Kudurescue.Core
     /// </summary>
     public sealed class VhdDevice : IBlockDevice
     {
+        /// <summary>The VHD file.</summary>
         private readonly FileStream _file;
+        /// <summary>True for a growing VHD (blocks only where written).</summary>
         private readonly bool _dynamic;
+        /// <summary>Where each block is in the file (growing VHD).</summary>
         private readonly uint[] _bat;
+        /// <summary>How big a block is.</summary>
         private readonly long _blockSize;
+        /// <summary>How big each block's map is.</summary>
         private readonly long _bitmapBytes;
 
+        /// <summary>A VHD file (made by Open).</summary>
         private VhdDevice(FileStream file, string name, long length, bool dynamic, uint[] bat, long blockSize)
         {
             _file = file;
@@ -62,10 +78,14 @@ namespace Kudurescue.Core
             _bitmapBytes = ((blockSize / 512 / 8) + 511) / 512 * 512;
         }
 
+        /// <summary>Its name.</summary>
         public string Name { get; }
+        /// <summary>How big the drive in it is.</summary>
         public long Length { get; }
+        /// <summary>VHD sectors are always 512 bytes.</summary>
         public int SectorSize => 512;
 
+        /// <summary>True when the file is a VHD (its footer says so).</summary>
         public static bool IsVhd(string path)
         {
             try
@@ -83,6 +103,7 @@ namespace Kudurescue.Core
             catch (UnauthorizedAccessException) { return false; }
         }
 
+        /// <summary>Opens a VHD file.</summary>
         public static VhdDevice Open(string path)
         {
             var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -122,6 +143,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Reads bytes from a place in the drive (zeros where a growing VHD has no block).</summary>
         public void Read(long offset, byte[] buffer, int index, int count)
         {
             if (offset < 0 || offset + count > Length) throw new IOException($"Read past the end of {Name}.");
@@ -152,10 +174,13 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Closes the file.</summary>
         public void Dispose() => _file.Dispose();
 
+        /// <summary>Reads a whole byte array.</summary>
         private static void ReadFully(Stream s, byte[] b) => ReadFully(s, b, 0, b.Length);
 
+        /// <summary>Reads count bytes (failing when the file ends first).</summary>
         private static void ReadFully(Stream s, byte[] b, int index, int count)
         {
             while (count > 0)
@@ -167,25 +192,34 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A 4-byte number, largest byte first.</summary>
         private static uint BE32(byte[] b, int o) => ((uint)b[o] << 24) | ((uint)b[o + 1] << 16) | ((uint)b[o + 2] << 8) | b[o + 3];
+        /// <summary>An 8-byte number, largest byte first.</summary>
         private static ulong BE64(byte[] b, int o) => ((ulong)BE32(b, o) << 32) | BE32(b, o + 4);
     }
 
     /// <summary>One partition found in a disk image (or the whole image, when it holds a single volume).</summary>
     public sealed class ImagePart
     {
+        /// <summary>Where it starts in the image.</summary>
         public long Offset { get; set; }
+        /// <summary>How big it is.</summary>
         public long Length { get; set; }
+        /// <summary>Its file system.</summary>
         public string Format { get; set; }
+        /// <summary>Its name.</summary>
         public string Label { get; set; }
+        /// <summary>Its number.</summary>
         public int Index { get; set; }
 
+        /// <summary>It in words: number, file system and size.</summary>
         public string Title => $"Partition {Index} · {Format} · {Kudurescue.Core.Format.Size(Length)}" + (string.IsNullOrEmpty(Label) ? string.Empty : $" · {Label}");
     }
 
     /// <summary>Drive images: opening .img/.dd/.vhd files, finding partitions inside them, and copying a drive into one.</summary>
     public static class DriveImages
     {
+        /// <summary>The kinds of image file in the open window.</summary>
         public const string FileFilter = "Drive images (*.img; *.dd; *.raw; *.bin; *.vhd)|*.img;*.dd;*.raw;*.bin;*.vhd;*.ima|All files|*.*";
 
         /// <summary>Opens an image file as a device.</summary>
@@ -270,6 +304,7 @@ namespace Kudurescue.Core
             return parts;
         }
 
+        /// <summary>A partition's file system from its first sector.</summary>
         private static string FormatOf(byte[] boot)
         {
             if (boot.Length < 512) return null;
@@ -285,6 +320,7 @@ namespace Kudurescue.Core
             return null;
         }
 
+        /// <summary>Reads count bytes at a place.</summary>
         private static byte[] Read(IBlockDevice device, long offset, int count)
         {
             if (offset < 0 || offset >= device.Length) return new byte[0];

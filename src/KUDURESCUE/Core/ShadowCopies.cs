@@ -1,3 +1,4 @@
+// Windows' Previous Versions of a drive (shadow copies), found through WMI.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,6 +10,7 @@ namespace Kudurescue.Core
     /// <summary>Lists, creates and removes Windows "Previous Versions" snapshots (Volume Shadow Copies). Needs administrator rights.</summary>
     public static class ShadowCopies
     {
+        /// <summary>A drive's Previous Versions, newest first.</summary>
         public static List<Snapshot> List(string drive)
         {
             var letter = VolumeDevice.DriveLetter(drive);
@@ -48,6 +50,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Removes a shadow copy (only the self-test does, for the one it made).</summary>
         public static void Delete(string id)
         {
             using (var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_ShadowCopy WHERE ID = '{id.Replace("'", string.Empty)}'"))
@@ -55,6 +58,7 @@ namespace Kudurescue.Core
                     using (o) o.Delete();
         }
 
+        /// <summary>A drive's volume name.</summary>
         private static string VolumeName(char letter)
         {
             var name = new StringBuilder(128);

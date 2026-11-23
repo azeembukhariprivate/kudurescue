@@ -1,3 +1,5 @@
+// A file found by a scan: its name, folder, size, times, where its data is, and its chance of coming back whole; and
+// the file kinds.
 using System;
 using System.Linq;
 using System.Collections.Generic;
@@ -10,14 +12,19 @@ namespace Kudurescue.Core
     /// <summary>How much of a deleted file is still on the drive. Unsure: still there, but where it starts had to be worked out.</summary>
     public enum Chance { Excellent, Unsure, Partial, Overwritten, Unrecoverable }
 
+    /// <summary>The kinds of file, for the filters.</summary>
     public enum FileKind { Photos, Videos, Documents, Music, Archives, Email, Design, Data, Programs, Other }
 
+    /// <summary>
+    /// Where a file was found: the file system's list, the Recycle Bin, the deep scan, or a Previous Version.
+    /// </summary>
     public enum FoundSource { Index, RecycleBin, Carved, Snapshot }
 
     /// <summary>A file that can (perhaps) be recovered. The marked members are kept when a scan is saved.</summary>
     [DataContract]
     public sealed class FoundFile : INotifyPropertyChanged
     {
+        /// <summary>True when it's ticked to recover.</summary>
         private bool _isChecked;
 
         [DataMember] public FoundSource Source { get; set; }
@@ -39,6 +46,7 @@ namespace Kudurescue.Core
         /// (null in scans saved by an older version). A repair cuts the damage off with these.</summary>
         [DataMember] public List<long> Damaged { get; set; }
 
+        /// <summary>The parts now used by other files, as start and length in bytes.</summary>
         public List<(long Start, long Length)> DamagedRanges =>
             Damaged == null ? null : Enumerable.Range(0, Damaged.Count / 2).Select(i => (Damaged[2 * i], Damaged[2 * i + 1])).ToList();
 
@@ -76,18 +84,26 @@ namespace Kudurescue.Core
 
         // Text for the file list.
         public string SizeText => IsFolder ? (Size > 0 ? "Folder · " + Format.Size(Size) : "Folder") : Format.Size(Size);
+        /// <summary>When it was last changed, as text.</summary>
         public string ModifiedText => Modified > new DateTime(1980, 1, 1) ? Modified.ToLocalTime().ToString("d MMM yyyy") : string.Empty;
+        /// <summary>Its chance, in words.</summary>
         public string ChanceText => FileKinds.ChanceLabel(Chance, GoodPercent);
+        /// <summary>Its folder ("\" at the top).</summary>
         public string FolderText => Folder.Length == 0 ? "\\" : Folder;
+        /// <summary>The colour for its chance.</summary>
         public string Tone => Chance == Chance.Excellent ? "ok" : Chance == Chance.Partial || Chance == Chance.Unsure ? "warn" : "bad";
+        /// <summary>True when it can be recovered (whole, unsure or in part).</summary>
         public bool CanRecover => Chance == Chance.Excellent || Chance == Chance.Unsure || Chance == Chance.Partial;
 
+        /// <summary>Its ending, in lower case.</summary>
         public string Extension => Path.GetExtension(Name ?? string.Empty).ToLowerInvariant();
         /// <summary>Recovered by copying an existing file (from the Recycle Bin or a snapshot) rather than reading the drive.</summary>
         public bool IsCopy => Source == FoundSource.RecycleBin || Source == FoundSource.Snapshot;
 
+        /// <summary>Its path below the drive's top.</summary>
         public string RelativePath => Folder.Length == 0 ? Name : Folder + "\\" + Name;
 
+        /// <summary>Tells the list a value changed.</summary>
         public event PropertyChangedEventHandler PropertyChanged;
 
         /// <summary>Raised when any file is ticked or unticked, so totals can be updated.</summary>
@@ -97,6 +113,7 @@ namespace Kudurescue.Core
     /// <summary>Groups files by type, from their extension.</summary>
     public static class FileKinds
     {
+        /// <summary>The kind of each file ending.</summary>
         private static readonly Dictionary<string, FileKind> Map = new Dictionary<string, FileKind>(StringComparer.OrdinalIgnoreCase);
 
         static FileKinds()
@@ -116,6 +133,7 @@ namespace Kudurescue.Core
             Add(FileKind.Programs, "exe msi msix appx dll sys iso img vhd vhdx vmdk vdi ova qcow2 apk ttf otf woff woff2 jar");
         }
 
+        /// <summary>The kind of a file by its name.</summary>
         public static FileKind Of(string name) =>
             Map.TryGetValue(Path.GetExtension(name ?? string.Empty), out var kind) ? kind : FileKind.Other;
 
@@ -137,6 +155,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A chance in words.</summary>
         public static string ChanceLabel(Chance chance, int goodPercent)
         {
             switch (chance)
@@ -149,6 +168,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A chance explained in a sentence or two.</summary>
         public static string ChanceExplained(FoundFile f)
         {
             switch (f.Chance)

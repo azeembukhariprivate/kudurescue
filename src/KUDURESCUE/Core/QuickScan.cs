@@ -1,3 +1,5 @@
+// A scan in progress: the files found, how far it is, pausing and stopping; the file systems' own scans and the deep
+// scan add to it.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,6 +10,7 @@ using System.Threading.Tasks;
 
 namespace Kudurescue.Core
 {
+    /// <summary>Where a scan is up to.</summary>
     public enum ScanState { Running, Paused, Finished, Stopped, Failed }
 
     /// <summary>
@@ -17,27 +20,42 @@ namespace Kudurescue.Core
     /// </summary>
     public sealed class QuickScan
     {
+        /// <summary>The made-up folder for files whose folder is lost.</summary>
         public const string LostFolders = "Lost folders";
 
+        /// <summary>Guards the list (added to from the scan's thread).</summary>
         private readonly object _lock = new object();
+        /// <summary>The files found.</summary>
         private readonly List<FoundFile> _files = new List<FoundFile>();
+        /// <summary>Files found since the window last took them.</summary>
         private readonly Queue<FoundFile> _recent = new Queue<FoundFile>();
+        /// <summary>Stops the scan.</summary>
         private readonly CancellationTokenSource _cancel = new CancellationTokenSource();
+        /// <summary>How long it has run (paused time left out).</summary>
         private readonly Stopwatch _clock = new Stopwatch();
+        /// <summary>True while paused.</summary>
         private volatile bool _paused;
+        /// <summary>How much is done, of how much.</summary>
         private long _done, _total;
 
+        /// <summary>A scan of this drive.</summary>
         public QuickScan(IVolume volume, string drive)
         {
             Volume = volume;
             Drive = drive;
         }
 
+        /// <summary>The drive read.</summary>
         public IVolume Volume { get; }
+        /// <summary>The drive's letter or image's name.</summary>
         public string Drive { get; }
+        /// <summary>Where it's up to.</summary>
         public ScanState State { get; private set; } = ScanState.Running;
+        /// <summary>What went wrong, when it failed.</summary>
         public string Error { get; private set; }
+        /// <summary>How much is done.</summary>
         public long Done => Interlocked.Read(ref _done);
+        /// <summary>How much there is to do.</summary>
         public long Total => Interlocked.Read(ref _total);
 
         /// <summary>What <see cref="Done"/> and <see cref="Total"/> count, like "Index entries" or "Folders".</summary>
@@ -46,10 +64,14 @@ namespace Kudurescue.Core
         /// <summary>True when <see cref="Done"/> and <see cref="Total"/> are bytes (Deep scan).</summary>
         public bool ProgressInBytes { get; set; }
 
+        /// <summary>How long it has run.</summary>
         public TimeSpan Elapsed => _clock.Elapsed;
+        /// <summary>How many places couldn't be read.</summary>
         public int Unreadable { get; set; }
+        /// <summary>True once it's finished, stopped or failed.</summary>
         public bool IsDone => State == ScanState.Finished || State == ScanState.Stopped || State == ScanState.Failed;
 
+        /// <summary>How far it is, 0 to 1.</summary>
         public double Fraction => Total == 0 ? 0 : Math.Min(1, (double)Done / Total);
 
         public TimeSpan? Remaining
@@ -73,8 +95,10 @@ namespace Kudurescue.Core
             get { lock (_lock) return _recent.Reverse().ToList(); }
         }
 
+        /// <summary>Runs the scan in the background.</summary>
         public Task RunAsync() => Task.Run(() => Run());
 
+        /// <summary>Pauses the scan.</summary>
         public void Pause()
         {
             if (State != ScanState.Running) return;
@@ -83,6 +107,7 @@ namespace Kudurescue.Core
             _clock.Stop();
         }
 
+        /// <summary>Goes on after a pause.</summary>
         public void Resume()
         {
             if (State != ScanState.Paused) return;
@@ -91,6 +116,7 @@ namespace Kudurescue.Core
             _clock.Start();
         }
 
+        /// <summary>Stops the scan.</summary>
         public void Stop()
         {
             _paused = false;
@@ -99,9 +125,12 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ for the volumes
 
+        /// <summary>Sets how much there is to do.</summary>
         public void SetTotal(long total) => Interlocked.Exchange(ref _total, total);
+        /// <summary>Sets how much is done.</summary>
         public void SetDone(long done) => Interlocked.Exchange(ref _done, done);
 
+        /// <summary>Adds a file found.</summary>
         public void Add(FoundFile file)
         {
             lock (_lock)

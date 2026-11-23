@@ -1,3 +1,4 @@
+// Small FAT32 and exFAT drive images made byte by byte for the tests, with folders, files and deleted entries.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,16 +11,24 @@ namespace Kudurescue.Tests
     /// <summary>Builds a FAT32 drive image byte by byte, with live and deleted entries (long names included).</summary>
     internal sealed class Fat32Image
     {
+        /// <summary>How big a sector is.</summary>
         public const int Sector = 512;
+        /// <summary>How many sectors come before the tables.</summary>
         public const int Reserved = 32;
         public const long Clusters = 70000; // more than 65535, so the "cleared top half" case applies
+        /// <summary>How many sectors each table takes.</summary>
         public readonly long FatSectors = ((Clusters + 2) * 4 + Sector - 1) / Sector;
+        /// <summary>The image's bytes.</summary>
         public readonly byte[] Data;
+        /// <summary>The cluster table.</summary>
         private readonly uint[] _fat = new uint[Clusters + 2];
+        /// <summary>Each folder's entries.</summary>
         private readonly Dictionary<long, List<byte[]>> _folders = new Dictionary<long, List<byte[]>>();
 
+        /// <summary>The time the test files were last changed.</summary>
         public static readonly DateTime Modified = new DateTime(2026, 3, 14, 18, 4, 58, DateTimeKind.Local);
 
+        /// <summary>An empty FAT32 image.</summary>
         public Fat32Image()
         {
             Data = new byte[(Reserved + 2 * FatSectors + Clusters) * Sector];
@@ -28,11 +37,15 @@ namespace Kudurescue.Tests
             Folder(2, 4); // root: four clusters, chained
         }
 
+        /// <summary>Where the clusters start.</summary>
         public long DataStart => (Reserved + 2 * FatSectors) * Sector;
+        /// <summary>Where a cluster starts.</summary>
         public long Offset(long cluster) => DataStart + (cluster - 2) * Sector;
 
+        /// <summary>How big each folder is, in clusters.</summary>
         private readonly Dictionary<long, int> _sizes = new Dictionary<long, int>();
 
+        /// <summary>Makes a folder at this cluster.</summary>
         public void Folder(long cluster, int clusters = 1)
         {
             _folders[cluster] = new List<byte[]>();
@@ -46,6 +59,7 @@ namespace Kudurescue.Tests
             for (var c = first; c < first + count; c++) _fat[c] = c == first + count - 1 ? 0x0FFFFFFF : (uint)(c + 1);
         }
 
+        /// <summary>Writes bytes into clusters.</summary>
         public void Write(long cluster, byte[] content) => content.CopyTo(Data, Offset(cluster));
 
         /// <summary>Adds an entry (with a long name if given) to a folder. Deleted entries get 0xE5 and a cleared top half.</summary>
@@ -101,8 +115,10 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>Frees a folder's cluster (as a delete does).</summary>
         public void FreeFolder(long cluster) => _fat[cluster] = 0;
 
+        /// <summary>Writes the image to a file.</summary>
         public string Save(string path)
         {
             var b = new byte[512];
@@ -137,18 +153,29 @@ namespace Kudurescue.Tests
     /// <summary>Builds an exFAT drive image byte by byte: boot sector, FAT, allocation bitmap and entry sets.</summary>
     internal sealed class ExFatImage
     {
+        /// <summary>How big a sector is.</summary>
         public const int Sector = 512;
+        /// <summary>How big a cluster is.</summary>
         public const int Cluster = 4096;
+        /// <summary>How many clusters the image has.</summary>
         public const long Clusters = 1000;
+        /// <summary>Where the cluster table starts, in sectors.</summary>
         public const long FatOffsetSectors = 128;
+        /// <summary>Where the clusters start, in sectors.</summary>
         public const long HeapOffsetSectors = 256;
+        /// <summary>The image's bytes.</summary>
         public readonly byte[] Data = new byte[HeapOffsetSectors * Sector + Clusters * Cluster];
+        /// <summary>The cluster table.</summary>
         private readonly uint[] _fat = new uint[Clusters + 2];
+        /// <summary>The map of used clusters.</summary>
         private readonly bool[] _used = new bool[Clusters + 2];
+        /// <summary>Each folder's entries.</summary>
         private readonly Dictionary<long, List<byte[]>> _folders = new Dictionary<long, List<byte[]>>();
 
+        /// <summary>The time the test files were last changed.</summary>
         public static readonly DateTime Modified = new DateTime(2026, 3, 14, 18, 4, 58, DateTimeKind.Utc);
 
+        /// <summary>An empty exFAT image.</summary>
         public ExFatImage()
         {
             _fat[0] = 0xFFFFFFF8;
@@ -163,10 +190,14 @@ namespace Kudurescue.Tests
             _folders[4].Add(bitmap);
         }
 
+        /// <summary>Where a cluster starts.</summary>
         public long Offset(long cluster) => HeapOffsetSectors * Sector + (cluster - 2) * Cluster;
+        /// <summary>Writes bytes into clusters.</summary>
         public void Write(long cluster, byte[] content) => content.CopyTo(Data, Offset(cluster));
+        /// <summary>Makes a folder at this cluster.</summary>
         public void Folder(long cluster) => _folders[cluster] = new List<byte[]>();
 
+        /// <summary>Marks clusters as used (chained in the table, or one after another).</summary>
         public void Use(long first, long count, bool chain)
         {
             for (var c = first; c < first + count; c++)
@@ -176,13 +207,16 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>Chains clusters in the table.</summary>
         public void Chain(params long[] clusters)
         {
             for (var i = 0; i < clusters.Length; i++) _fat[clusters[i]] = i == clusters.Length - 1 ? 0xFFFFFFFF : (uint)clusters[i + 1];
         }
 
+        /// <summary>Marks a cluster as used.</summary>
         public void MarkUsed(long cluster) => _used[cluster] = true;
 
+        /// <summary>Adds a file or folder's entries to a folder (deleted when asked).</summary>
         public void Set(long folder, string name, long cluster, long size, bool deleted, bool noFatChain, bool isFolder = false)
         {
             var nameEntries = (name.Length + 14) / 15;
@@ -215,6 +249,7 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>Writes the image to a file.</summary>
         public string Save(string path)
         {
             var b = new byte[512];

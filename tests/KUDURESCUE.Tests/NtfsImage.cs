@@ -1,3 +1,5 @@
+// Makes a small NTFS drive image in memory for the tests: the boot sector, the file table and records written byte by
+// byte, so the scans can be checked without Windows.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,36 +14,52 @@ namespace Kudurescue.Tests
     /// </summary>
     internal sealed class NtfsImage
     {
+        /// <summary>How big a cluster is.</summary>
         public const int Cluster = 4096;
+        /// <summary>How big a file record is.</summary>
         public const int RecordSize = 1024;
+        /// <summary>How many clusters the image has.</summary>
         public const long Clusters = 2048;
+        /// <summary>Where the file table starts.</summary>
         public const long MftLcn = 16;
+        /// <summary>How many records the file table has.</summary>
         public const int MftRecords = 64;
+        /// <summary>Where the file table's spare copy starts.</summary>
         public const long MirrLcn = 34;
+        /// <summary>Where the map of used clusters is.</summary>
         public const long BitmapLcn = 40;
 
+        /// <summary>The image's bytes.</summary>
         public readonly byte[] Data = new byte[Clusters * Cluster];
+        /// <summary>Which clusters are used.</summary>
         private readonly bool[] _used = new bool[Clusters];
+        /// <summary>The records written.</summary>
         private readonly byte[][] _records = new byte[MftRecords][];
 
+        /// <summary>The time the test files were made.</summary>
         public static readonly DateTime Created = new DateTime(2026, 3, 10, 9, 30, 0, DateTimeKind.Utc);
+        /// <summary>The time they were last changed.</summary>
         public static readonly DateTime Modified = new DateTime(2026, 3, 14, 18, 5, 0, DateTimeKind.Utc);
 
+        /// <summary>An empty image.</summary>
         public NtfsImage()
         {
             for (long c = 0; c <= 50; c++) _used[c] = true; // boot, MFT, mirror, bitmap
         }
 
+        /// <summary>Marks clusters as used.</summary>
         public void MarkUsed(long lcn, long count)
         {
             for (var c = lcn; c < lcn + count; c++) _used[c] = true;
         }
 
+        /// <summary>Writes bytes into clusters.</summary>
         public void WriteClusters(long lcn, byte[] content)
         {
             Buffer.BlockCopy(content, 0, Data, (int)(lcn * Cluster), content.Length);
         }
 
+        /// <summary>Bytes in a pattern, different for each seed.</summary>
         public static byte[] Pattern(int length, int seed)
         {
             var b = new byte[length];
@@ -58,17 +76,26 @@ namespace Kudurescue.Tests
 
         public sealed class Record
         {
+            /// <summary>The record's number.</summary>
             public long Number;
+            /// <summary>How many times it was used.</summary>
             public int Sequence = 1;
+            /// <summary>True when it's in use.</summary>
             public bool InUse;
+            /// <summary>True for a folder.</summary>
             public bool Directory;
+            /// <summary>The main record, for an extra record.</summary>
             public long BaseRecord;
+            /// <summary>Its attributes, as bytes.</summary>
             public readonly List<byte[]> Attributes = new List<byte[]>();
+            /// <summary>Spoil the record's check bytes (to test a torn record is left out).</summary>
             public bool TearFixup;
         }
 
+        /// <summary>Adds a record.</summary>
         public void Add(Record r) => _records[r.Number] = Encode(r);
 
+        /// <summary>A record as bytes, with its check bytes.</summary>
         private static byte[] Encode(Record r)
         {
             var b = new byte[RecordSize];
@@ -105,6 +132,7 @@ namespace Kudurescue.Tests
             return b;
         }
 
+        /// <summary>A standard information attribute (times and attributes).</summary>
         public static byte[] StandardInformation(uint fileAttributes = 0x20)
         {
             var v = new byte[48];
@@ -116,6 +144,7 @@ namespace Kudurescue.Tests
             return Resident(0x10, v);
         }
 
+        /// <summary>A file name attribute.</summary>
         public static byte[] FileName(long parent, int parentSeq, string name, int nameSpace = 1, long size = 0)
         {
             var v = new byte[66 + name.Length * 2];
@@ -129,6 +158,7 @@ namespace Kudurescue.Tests
             return Resident(0x30, v);
         }
 
+        /// <summary>An attribute with its value in the record.</summary>
         public static byte[] Resident(uint type, byte[] value, string name = null, ushort flags = 0)
         {
             var nameBytes = name == null ? new byte[0] : Encoding.Unicode.GetBytes(name);
@@ -173,6 +203,7 @@ namespace Kudurescue.Tests
             return a;
         }
 
+        /// <summary>Where data is, as NTFS writes it (data runs).</summary>
         public static byte[] EncodeRuns((long Lcn, long Length)[] runs)
         {
             var bytes = new List<byte>();
@@ -196,6 +227,7 @@ namespace Kudurescue.Tests
             return bytes.ToArray();
         }
 
+        /// <summary>A number in as few bytes as it needs.</summary>
         private static byte[] MinBytes(long value, bool signed)
         {
             for (var n = 1; n <= 8; n++)
@@ -207,6 +239,7 @@ namespace Kudurescue.Tests
             return BitConverter.GetBytes(value);
         }
 
+        /// <summary>An attribute list (for files whose attributes don't fit in one record).</summary>
         public static byte[] AttributeList(params (uint Type, long Segment, long StartVcn)[] entries)
         {
             var v = new List<byte>();
@@ -226,6 +259,7 @@ namespace Kudurescue.Tests
 
         // ------------------------------------------------------------------ image
 
+        /// <summary>Writes the image to a file.</summary>
         public string Save(string path)
         {
             // Boot sector
@@ -276,9 +310,13 @@ namespace Kudurescue.Tests
             return path;
         }
 
+        /// <summary>A length rounded up to 8.</summary>
         private static int Align(int n) => (n + 7) & ~7;
+        /// <summary>Writes 2 bytes.</summary>
         private static void W16(byte[] b, int o, int v) => BitConverter.GetBytes((ushort)v).CopyTo(b, o);
+        /// <summary>Writes 4 bytes.</summary>
         private static void W32(byte[] b, int o, int v) => BitConverter.GetBytes(v).CopyTo(b, o);
+        /// <summary>Writes 8 bytes.</summary>
         private static void W64(byte[] b, int o, long v) => BitConverter.GetBytes(v).CopyTo(b, o);
 
         // ------------------------------------------------------------------ LZNT1 (for building compressed test files)

@@ -1,3 +1,5 @@
+// Previews without copying anything: a found file read in place from any position (FoundStream), the details of music
+// and videos (MP3, M4A/MP4, FLAC, WAV, Ogg/Opus), and the text of Office files and RTF.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,11 +17,16 @@ namespace Kudurescue.Core
     /// </summary>
     public sealed class FoundStream : Stream
     {
+        /// <summary>The drive.</summary>
         private readonly IVolume _volume;
+        /// <summary>The file found.</summary>
         private readonly FoundFile _file;
+        /// <summary>A file read directly (from the Recycle Bin or a Previous Version), else null.</summary>
         private readonly Stream _inner;
+        /// <summary>Where reading is up to.</summary>
         private long _position;
 
+        /// <summary>A stream over a found file.</summary>
         private FoundStream(IVolume volume, FoundFile file, Stream inner)
         {
             _volume = volume;
@@ -46,6 +53,7 @@ namespace Kudurescue.Core
             return f.Runs == null ? null : new FoundStream(volume, f, null);
         }
 
+        /// <summary>Reads from where it's up to: the file's runs on the drive (zeros where nothing is kept).</summary>
         public override int Read(byte[] buffer, int offset, int count)
         {
             if (_inner != null) return _inner.Read(buffer, offset, count);
@@ -78,6 +86,7 @@ namespace Kudurescue.Core
             return done;
         }
 
+        /// <summary>Moves to a place in the file.</summary>
         public override long Seek(long offset, SeekOrigin origin)
         {
             if (_inner != null) return _inner.Seek(offset, origin);
@@ -86,9 +95,13 @@ namespace Kudurescue.Core
             return _position = to;
         }
 
+        /// <summary>It can be read.</summary>
         public override bool CanRead => true;
+        /// <summary>It can move to any place.</summary>
         public override bool CanSeek => true;
+        /// <summary>It can never be written.</summary>
         public override bool CanWrite => false;
+        /// <summary>The file's size.</summary>
         public override long Length => _inner?.Length ?? _file.Size;
 
         public override long Position
@@ -97,10 +110,14 @@ namespace Kudurescue.Core
             set => Seek(value, SeekOrigin.Begin);
         }
 
+        /// <summary>Nothing to write.</summary>
         public override void Flush() { }
+        /// <summary>Its length can't be changed.</summary>
         public override void SetLength(long value) => throw new NotSupportedException();
+        /// <summary>It can't be written.</summary>
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
+        /// <summary>Closes the file read directly, when there is one.</summary>
         protected override void Dispose(bool disposing)
         {
             if (disposing) _inner?.Dispose();
@@ -127,11 +144,15 @@ namespace Kudurescue.Core
     /// <summary>What a music or video file says about itself: its name, who made it, and how long it is.</summary>
     public sealed class MediaInfo
     {
+        /// <summary>The title, artist and album.</summary>
         public string Title, Artist, Album;
+        /// <summary>How long it plays.</summary>
         public TimeSpan Length;
 
+        /// <summary>True when nothing was found.</summary>
         public bool IsEmpty => string.IsNullOrEmpty(Title) && string.IsNullOrEmpty(Artist) && string.IsNullOrEmpty(Album) && Length == TimeSpan.Zero;
 
+        /// <summary>The endings whose details can be read.</summary>
         public static readonly IReadOnlyCollection<string> Kinds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { ".mp3", ".m4a", ".m4b", ".aac", ".mp4", ".m4v", ".mov", ".3gp", ".flac", ".wav", ".ogg", ".oga", ".opus" };
 
@@ -158,15 +179,21 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A 4-byte number, largest byte first.</summary>
         private static uint Be32(byte[] b, int p) => (uint)(b[p] << 24 | b[p + 1] << 16 | b[p + 2] << 8 | b[p + 3]);
+        /// <summary>An 8-byte number, largest byte first.</summary>
         private static ulong Be64(byte[] b, int p) => (ulong)Be32(b, p) << 32 | Be32(b, p + 4);
+        /// <summary>A 4-byte number, smallest byte first.</summary>
         private static uint Le32(byte[] b, int p) => (uint)(b[p] | b[p + 1] << 8 | b[p + 2] << 16 | b[p + 3] << 24);
+        /// <summary>A text tidied (null when empty).</summary>
         private static string Clean(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Replace("\0", string.Empty).Trim();
 
         // ------------------------------------------------------------------ MP3
 
+        /// <summary>MP3 bit rates.</summary>
         private static readonly int[] Mp3Rates = { 0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0 };
 
+        /// <summary>An MP3's tags (ID3) and length.</summary>
         private static MediaInfo Mp3(Stream s)
         {
             var info = new MediaInfo();
@@ -219,6 +246,7 @@ namespace Kudurescue.Core
             return info;
         }
 
+        /// <summary>A text from an ID3 tag (in its own encoding).</summary>
         private static string Id3Text(byte[] tag, int p, int length)
         {
             var encoding = tag[p];
@@ -238,6 +266,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ MP4, M4A, MOV
 
+        /// <summary>An MP4 or M4A's tags and length.</summary>
         private static MediaInfo Mp4(Stream s)
         {
             var info = new MediaInfo();
@@ -264,6 +293,7 @@ namespace Kudurescue.Core
             return info;
         }
 
+        /// <summary>Reads MP4 boxes for the tags.</summary>
         private static void Boxes(byte[] b, int start, int end, MediaInfo info)
         {
             for (var p = start; p + 8 <= end;)
@@ -289,6 +319,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A tag's text.</summary>
         private static string Data(byte[] b, int p, int size)
         {
             // An item holds a "data" box: size, "data", type and locale (8 bytes), then the text.
@@ -300,6 +331,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ FLAC, WAV, Ogg
 
+        /// <summary>A FLAC's tags and length.</summary>
         private static MediaInfo Flac(Stream s)
         {
             var info = new MediaInfo();
@@ -351,6 +383,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A WAV's length (and its tags, when it has any).</summary>
         private static MediaInfo Wav(Stream s)
         {
             var info = new MediaInfo();
@@ -390,6 +423,7 @@ namespace Kudurescue.Core
             return info;
         }
 
+        /// <summary>An Ogg or Opus file's tags and length.</summary>
         private static MediaInfo Ogg(Stream s)
         {
             var info = new MediaInfo();
@@ -415,6 +449,7 @@ namespace Kudurescue.Core
             return info;
         }
 
+        /// <summary>Where a text is in the bytes, or -1.</summary>
         private static int Find(byte[] b, string text)
         {
             var key = Encoding.GetEncoding("ISO-8859-1").GetBytes(text);
@@ -435,6 +470,7 @@ namespace Kudurescue.Core
     /// <summary>The words in a Word, Excel or PowerPoint file, for the preview.</summary>
     public static class OfficeText
     {
+        /// <summary>The endings whose text can be read.</summary>
         public static readonly IReadOnlyCollection<string> Kinds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { ".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm", ".doc", ".xls", ".ppt", ".odt", ".ods", ".odp", ".rtf" };
 
@@ -460,6 +496,10 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>
+        /// The text of an Office file (.docx, .xlsx, .pptx), from its XML parts only, with limits so a file made to
+        /// swell can't fill the memory.
+        /// </summary>
         private static string Package(byte[] data, string ext)
         {
             // The parts, read from the list at the end; if that's lost, from each part's own header.
@@ -532,6 +572,7 @@ namespace Kudurescue.Core
             return sb.ToString();
         }
 
+        /// <summary>XML's text without its tags.</summary>
         private static string Strip(string xml) => System.Net.WebUtility.HtmlDecode(Regex.Replace(xml, "<[^>]+>", string.Empty));
 
         /// <summary>The older Word, Excel and PowerPoint files: the readable words found inside them.</summary>
@@ -547,6 +588,7 @@ namespace Kudurescue.Core
             return sb.ToString();
         }
 
+        /// <summary>An RTF's text without its codes.</summary>
         private static string Rtf(byte[] data)
         {
             var text = Encoding.GetEncoding("ISO-8859-1").GetString(data);

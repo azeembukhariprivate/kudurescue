@@ -1,3 +1,4 @@
+// The Settings and About windows.
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +11,7 @@ namespace Kudurescue.Views
 {
     public sealed class SettingsWindow : Window
     {
+        /// <summary>Makes the Settings window.</summary>
         public SettingsWindow(Window owner)
         {
             Width = 560;
@@ -78,6 +80,7 @@ namespace Kudurescue.Views
 
     public static class About
     {
+        /// <summary>Makes the About window.</summary>
         public static Window Build(Window owner)
         {
             var tile = new Border
@@ -149,8 +152,12 @@ namespace Kudurescue.Views
             return window;
         }
 
+        /// <summary>Shows the About window.</summary>
         public static void Show(Window owner) => Build(owner).ShowDialog();
 
+        /// <summary>
+        /// Opens a file that came with the app (the licence...), or the app's page online when it isn't there.
+        /// </summary>
         private static void OpenLocal(string name)
         {
             var path = Path.Combine(Path.GetDirectoryName(AppInfo.ExePath) ?? string.Empty, name);

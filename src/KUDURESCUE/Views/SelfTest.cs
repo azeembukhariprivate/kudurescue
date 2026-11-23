@@ -1,3 +1,6 @@
+// KUDURESCUE.exe --self-test: makes a small virtual drive, writes and deletes known files, scans and recovers them
+// (quick and deep, images, saved scans, Previous Versions, repairs, previews), and drives the windows (run by the build
+// on Windows, with administrator rights).
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -20,15 +23,23 @@ namespace Kudurescue.Views
     /// </summary>
     public static class SelfTest
     {
+        /// <summary>True while the self-test runs (errors are kept instead of shown).</summary>
         public static bool Running { get; private set; }
+        /// <summary>Errors that weren't expected.</summary>
         public static List<string> Errors { get; } = new List<string>();
 
+        /// <summary>The self-test's log.</summary>
         private static StringBuilder _log;
+        /// <summary>The folder for the test's files.</summary>
         private static string _temp;
+        /// <summary>The virtual drive's file.</summary>
         private static string _vhd;
+        /// <summary>The virtual drive's letter.</summary>
         private static string _drive;
+        /// <summary>Each test file's bytes, by name, to check what comes back.</summary>
         private static readonly Dictionary<string, byte[]> Expected = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>Runs every step and returns 0 when all passed.</summary>
         public static int Run()
         {
             Running = true;
@@ -144,6 +155,7 @@ namespace Kudurescue.Views
 
         // ------------------------------------------------------------------ repair and previews
 
+        /// <summary>Adds a note to the log under the step.</summary>
         private static void Note(string text) => _log.AppendLine("      " + text);
 
         /// <summary>A 320×240 picture: a blue-to-orange band at every row, so every part looks different from grey.</summary>
@@ -165,6 +177,7 @@ namespace Kudurescue.Views
             return bmp;
         }
 
+        /// <summary>A picture saved by this encoder.</summary>
         private static byte[] Encode(System.Windows.Media.Imaging.BitmapEncoder encoder, System.Windows.Media.Imaging.BitmapSource picture)
         {
             encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(picture));
@@ -184,8 +197,10 @@ namespace Kudurescue.Views
             return (px[2], px[1], px[0]);
         }
 
+        /// <summary>True when a colour is grey.</summary>
         private static bool Greyish((int R, int G, int B) c) => Math.Abs(c.R - c.G) < 30 && Math.Abs(c.G - c.B) < 30 && c.R > 90 && c.R < 170;
 
+        /// <summary>Repairing damaged photos.</summary>
         private static void RepairPhotos()
         {
             var picture = TestPicture();
@@ -238,6 +253,7 @@ namespace Kudurescue.Views
             return Encoding.ASCII.GetBytes(pdf.ToString());
         }
 
+        /// <summary>A PDF's first page as a preview.</summary>
         private static void PreviewPdf()
         {
             var task = RichPreview.PdfPage(TestPdf());
@@ -278,6 +294,7 @@ namespace Kudurescue.Views
             return Cat(F("RIFF"), I32(body2.Length), body2);
         }
 
+        /// <summary>A still from a video as a preview.</summary>
         private static void PreviewVideo()
         {
             if (!RichPreview.CanReadVideo())
@@ -294,6 +311,7 @@ namespace Kudurescue.Views
             Expect(bottom.R > 180 && bottom.G > 160 && bottom.B < 80, $"yellow below, the right way up (got {bottom})");
         }
 
+        /// <summary>Runs one step, writing to the log whether it passed.</summary>
         private static void Step(string name, Action action)
         {
             var before = Errors.Count;
@@ -313,6 +331,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>Fails the step when the condition isn't true.</summary>
         private static void Expect(bool condition, string what)
         {
             if (!condition) throw new Exception("expected " + what);
@@ -320,6 +339,7 @@ namespace Kudurescue.Views
 
         // ================================================================== the test drive
 
+        /// <summary>Makes the virtual drive.</summary>
         private static void CreateDrive()
         {
             var used = new HashSet<char>(DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])));
@@ -410,6 +430,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>Writes what's waiting to the drive.</summary>
         private static void FlushDrive(string drive)
         {
             using (var handle = Native.CreateFile(@"\\.\" + drive, Native.GENERIC_READ | Native.GENERIC_WRITE,
@@ -420,12 +441,14 @@ namespace Kudurescue.Views
             Thread.Sleep(1500);
         }
 
+        /// <summary>Removes the virtual drive.</summary>
         private static void RemoveDrive()
         {
             if (_vhd == null || !File.Exists(_vhd)) return;
             Diskpart($"select vdisk file=\"{_vhd}\"", "detach vdisk");
         }
 
+        /// <summary>Runs Windows' diskpart with these commands.</summary>
         private static void Diskpart(params string[] commands)
         {
             var script = Path.Combine(_temp, "diskpart-" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".txt");
@@ -453,6 +476,7 @@ namespace Kudurescue.Views
             Thread.Sleep(1500);
         }
 
+        /// <summary>Writes a test file on the virtual drive.</summary>
         private static void Put(string relative, byte[] data)
         {
             var path = Path.Combine(_drive + "\\", relative);
@@ -461,6 +485,7 @@ namespace Kudurescue.Views
             Expected[relative] = data;
         }
 
+        /// <summary>Bytes in a pattern, different for each seed.</summary>
         private static byte[] Pattern(int length, int seed)
         {
             var b = new byte[length];
@@ -468,6 +493,7 @@ namespace Kudurescue.Views
             return b;
         }
 
+        /// <summary>Writes the test files and deletes them.</summary>
         private static void WriteAndDelete()
         {
             Put(@"Photos\2026\Goa trip\IMG_4021.JPG", Pattern(300_000, 1));
@@ -511,6 +537,7 @@ namespace Kudurescue.Views
             Flush();
         }
 
+        /// <summary>Runs a program, failing when it fails.</summary>
         private static void Run(string exe, string args)
         {
             using (var p = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true }))
@@ -520,8 +547,10 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>The files found.</summary>
         private static List<FoundFile> _found;
 
+        /// <summary>The scan finds the deleted files.</summary>
         private static void ScanFindsFiles()
         {
             var watch = Stopwatch.StartNew();
@@ -538,6 +567,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>Recovering gives back the same bytes, on another drive.</summary>
         private static void RecoverFiles()
         {
             var dest = Path.Combine(_temp, "recovered");
@@ -555,6 +585,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>The Recycle Bin's files are found and recovered.</summary>
         private static void RecycleBinCheck()
         {
             // A Recycle Bin entry laid out exactly as Windows writes it ($I with the details, $R with the content).
@@ -598,6 +629,7 @@ namespace Kudurescue.Views
             Expect(result.Problems.Count == 0, "no problems");
         }
 
+        /// <summary>A scan through the windows, step by step.</summary>
         private static void ScanThroughUi(MainWindow main)
         {
             main.BeginScan(_drive);
@@ -689,8 +721,10 @@ namespace Kudurescue.Views
 
         // ================================================================== images, saved scans, snapshots
 
+        /// <summary>The disk image and saved scan made.</summary>
         private static string _imagePath, _savedPath;
 
+        /// <summary>A disk image of the virtual drive is scanned.</summary>
         private static void ImageRound()
         {
             _imagePath = Path.Combine(_temp, "kudurescue-copy.img");
@@ -759,6 +793,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>A scan is saved and opened again.</summary>
         private static void SavedRound()
         {
             _savedPath = Path.Combine(_temp, "test" + SavedScan.Extension);
@@ -777,6 +812,7 @@ namespace Kudurescue.Views
             Expect(File.ReadAllBytes(Path.Combine(dest, @"Old folder\Inner\report.docx")).SequenceEqual(Expected[@"Old folder\Inner\report.docx"]), "recovered from the saved scan");
         }
 
+        /// <summary>A Previous Version's deleted files are found.</summary>
         private static void SnapshotRound()
         {
             var file = Path.Combine(_drive + "\\", "Snapshot test", "keep me.txt");
@@ -812,9 +848,13 @@ namespace Kudurescue.Views
 
         // ================================================================== deep scan
 
+        /// <summary>Byte arrays joined.</summary>
         private static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
+        /// <summary>A 2-byte number, largest byte first.</summary>
         private static byte[] BE16(int v) => new[] { (byte)(v >> 8), (byte)v };
+        /// <summary>A 4-byte number, largest byte first.</summary>
         private static byte[] BE32(long v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+        /// <summary>Pattern bytes with no 0xFF (so a JPEG's marks aren't made by chance).</summary>
         private static byte[] NoFF(int n, int seed) => Pattern(n, seed).Select(b => b == 0xFF ? (byte)0x7E : b).ToArray();
 
         /// <summary>Real files of the main types, with valid structures, for Deep scan to find.</summary>
@@ -848,6 +888,7 @@ namespace Kudurescue.Views
             return new Dictionary<string, byte[]> { [".jpg"] = jpeg, [".png"] = png, [".pdf"] = pdf, [".mp4"] = mp4, [".docx"] = docx };
         }
 
+        /// <summary>The deep scan finds files by their first bytes.</summary>
         private static void DeepScanRound()
         {
             var used = new HashSet<char>(DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])));
@@ -908,6 +949,7 @@ namespace Kudurescue.Views
 
         // ================================================================== windows
 
+        /// <summary>Puts a window where it can't be seen.</summary>
         private static void OffScreen(Window w)
         {
             w.WindowStartupLocation = WindowStartupLocation.Manual;
@@ -918,6 +960,7 @@ namespace Kudurescue.Views
             w.ShowInTaskbar = false;
         }
 
+        /// <summary>Shows a window, takes its screenshot and closes it.</summary>
         private static void ShowAndClose(Window w)
         {
             OffScreen(w);
@@ -927,6 +970,7 @@ namespace Kudurescue.Views
             w.Close();
         }
 
+        /// <summary>Lets the windows handle what's waiting.</summary>
         private static void Pump()
         {
             foreach (Window w in Application.Current.Windows) w.UpdateLayout();

@@ -1,3 +1,5 @@
+// Repairing damaged Word, Excel and PowerPoint files: their parts found by their own headers and checked by CRC, and
+// the file put together again without what was lost.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -18,21 +20,33 @@ namespace Kudurescue.Core
     /// </summary>
     public static class Office
     {
+        /// <summary>The namespace of the package's own list of links.</summary>
         private const string PackageRels = "http://schemas.openxmlformats.org/package/2006/relationships";
+        /// <summary>The namespace of the list of part kinds.</summary>
         private const string ContentTypesNs = "http://schemas.openxmlformats.org/package/2006/content-types";
+        /// <summary>The kind of link to the main document.</summary>
         private const string OfficeDocument = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+        /// <summary>Word's XML namespace.</summary>
         private static readonly XNamespace W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        /// <summary>Excel's XML namespace.</summary>
         private static readonly XNamespace S = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        /// <summary>PowerPoint's XML namespace.</summary>
         private static readonly XNamespace P = "http://schemas.openxmlformats.org/presentationml/2006/main";
+        /// <summary>The namespace of links between parts.</summary>
         private static readonly XNamespace R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        /// <summary>The same, as an XML namespace.</summary>
         private static readonly XNamespace Rel = PackageRels;
+        /// <summary>The namespace of the list of part kinds.</summary>
         private static readonly XNamespace Ct = ContentTypesNs;
 
         /// <summary>A part read from a damaged package: whole (checksum right) or only its readable start.</summary>
         public sealed class Part
         {
+            /// <summary>The part's name.</summary>
             public string Name;
+            /// <summary>Its bytes, as unpacked.</summary>
             public byte[] Data;
+            /// <summary>True when it unpacked whole and its CRC is right.</summary>
             public bool Whole;
         }
 
@@ -95,6 +109,7 @@ namespace Kudurescue.Core
             return parts;
         }
 
+        /// <summary>Unpacks a part (no more than max bytes).</summary>
         private static byte[] Inflate(byte[] zip, int start, int length, long max)
         {
             var output = new MemoryStream();
@@ -149,6 +164,7 @@ namespace Kudurescue.Core
             return Pack(whole);
         }
 
+        /// <summary>True when the bytes open as a whole ZIP.</summary>
         private static bool IsReadableZip(byte[] data)
         {
             try
@@ -174,6 +190,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ Word
 
+        /// <summary>A damaged Word document: keeps the text that's whole.</summary>
         private static bool FixWord(Dictionary<string, Part> parts, Dictionary<string, byte[]> whole, string main)
         {
             if (whole.ContainsKey(main)) return false;
@@ -194,6 +211,9 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ Excel
 
+        /// <summary>
+        /// A damaged Excel workbook: keeps the whole rows of damaged sheets, and leaves out lost sheets.
+        /// </summary>
         private static bool FixExcel(Dictionary<string, Part> parts, Dictionary<string, byte[]> whole, string main)
         {
             if (!whole.TryGetValue(main, out var workbookBytes)) return false;
@@ -276,6 +296,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ PowerPoint
 
+        /// <summary>A damaged PowerPoint presentation: leaves out lost slides.</summary>
         private static bool FixPowerPoint(Dictionary<string, byte[]> whole, string main)
         {
             if (!whole.TryGetValue(main, out var bytes)) return false;
@@ -311,6 +332,7 @@ namespace Kudurescue.Core
             return changed;
         }
 
+        /// <summary>Puts in whatever parts every file of its kind needs (taken from a plain one).</summary>
         private static bool LayoutWhole(Dictionary<string, byte[]> whole, string slide)
         {
             if (!whole.TryGetValue(RelsOf(slide), out var rb)) return false;
@@ -402,6 +424,7 @@ namespace Kudurescue.Core
             return changed;
         }
 
+        /// <summary>A part's kind (for the list of part kinds), from its name.</summary>
         private static string KnownType(string part, string main)
         {
             var p = part.ToLowerInvariant();
@@ -424,6 +447,7 @@ namespace Kudurescue.Core
             return null;
         }
 
+        /// <summary>Packs the parts into a ZIP.</summary>
         private static byte[] Pack(Dictionary<string, byte[]> whole)
         {
             var output = new MemoryStream();
@@ -445,12 +469,14 @@ namespace Kudurescue.Core
         private static List<string> CompleteElements(string xml, string tag) =>
             Regex.Matches(xml, "<" + tag + @"(?:\s[^>]*)?(?:/>|>[\s\S]*?</" + tag + ">)").Cast<Match>().Select(m => m.Value).ToList();
 
+        /// <summary>The links file of a part.</summary>
         private static string RelsOf(string part)
         {
             var i = part.LastIndexOf('/');
             return i < 0 ? "_rels/" + part + ".rels" : part.Substring(0, i) + "/_rels/" + part.Substring(i + 1) + ".rels";
         }
 
+        /// <summary>The part a links file belongs to.</summary>
         private static string OwnerOf(string rels)
         {
             if (string.Equals(rels, "_rels/.rels", StringComparison.OrdinalIgnoreCase)) return string.Empty;
@@ -458,6 +484,7 @@ namespace Kudurescue.Core
             return name.Replace("_rels/", string.Empty);
         }
 
+        /// <summary>Removes the links to a part that was lost.</summary>
         private static void RemoveRels(Dictionary<string, byte[]> whole, string part) => whole.Remove(RelsOf(part));
 
         /// <summary>A link's target as a part name, from the part that holds the link.</summary>
@@ -475,18 +502,21 @@ namespace Kudurescue.Core
             return string.Join("/", parts);
         }
 
+        /// <summary>A link's target from the part that links to it.</summary>
         private static string Relative(string owner, string target)
         {
             var dir = owner.Contains("/") ? owner.Substring(0, owner.LastIndexOf('/') + 1) : string.Empty;
             return dir.Length > 0 && target.StartsWith(dir) ? target.Substring(dir.Length) : "/" + target;
         }
 
+        /// <summary>XML from bytes (no DTDs).</summary>
         private static XDocument Parse(byte[] bytes)
         {
             try { return XDocument.Parse(Encoding.UTF8.GetString(bytes).TrimStart('﻿')); }
             catch (System.Xml.XmlException) { return null; }
         }
 
+        /// <summary>XML as bytes.</summary>
         private static byte[] Xml(XDocument doc)
         {
             var s = new MemoryStream();
@@ -494,11 +524,15 @@ namespace Kudurescue.Core
             return s.ToArray();
         }
 
+        /// <summary>Text with XML's escapes turned back.</summary>
         private static string Unescape(string s) => System.Net.WebUtility.HtmlDecode(s);
 
+        /// <summary>A 2-byte number, smallest byte first.</summary>
         private static int U16(byte[] b, int p) => b[p] | b[p + 1] << 8;
+        /// <summary>A 4-byte number, smallest byte first.</summary>
         private static uint U32(byte[] b, int p) => (uint)(b[p] | b[p + 1] << 8 | b[p + 2] << 16 | b[p + 3] << 24);
 
+        /// <summary>Where the bytes are found in data, from a place, or -1.</summary>
         private static int Find(byte[] data, byte[] what, int from)
         {
             for (var i = from; i + what.Length <= data.Length; i++)
@@ -535,6 +569,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Writes a PNG part (for the grey pictures put in place of lost ones).</summary>
         private static void Chunk(Stream s, string type, byte[] data)
         {
             var head = new byte[8];

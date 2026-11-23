@@ -1,3 +1,6 @@
+// Deep scan's file finders: each file kind told by its first bytes, and its length worked out from its own layout (PNG,
+// GIF, BMP, PDF, RTF, MP4/MOV, RIFF, MKV, MP3, 7z, SQLite, fonts...); and ByteSource, which reads the drive a page at a
+// time.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,19 +11,26 @@ namespace Kudurescue.Core
     /// <summary>Random access to a drive with a small cache, for walking file structures during a Deep scan.</summary>
     public sealed class ByteSource
     {
+        /// <summary>How much is read at a time (64 KB).</summary>
         private const int PageSize = 64 * 1024;
+        /// <summary>The drive read.</summary>
         private readonly IBlockDevice _device;
+        /// <summary>Pages read lately, by number.</summary>
         private readonly Dictionary<long, byte[]> _pages = new Dictionary<long, byte[]>();
+        /// <summary>The order they were read in (the oldest are dropped).</summary>
         private readonly Queue<long> _order = new Queue<long>();
 
+        /// <summary>Reads this drive.</summary>
         public ByteSource(IBlockDevice device)
         {
             _device = device;
             Length = device.Length;
         }
 
+        /// <summary>How big the drive is.</summary>
         public long Length { get; }
 
+        /// <summary>One byte at a place (-1 past the end).</summary>
         public int Byte(long offset)
         {
             if (offset < 0 || offset >= Length) return -1;
@@ -49,6 +59,7 @@ namespace Kudurescue.Core
             return done == count ? result : result.Take(done).ToArray();
         }
 
+        /// <summary>A page, from memory when it was read lately.</summary>
         private byte[] Page(long index)
         {
             if (_pages.TryGetValue(index, out var page)) return page;
@@ -62,13 +73,20 @@ namespace Kudurescue.Core
             return page;
         }
 
+        /// <summary>A 2-byte number, largest byte first.</summary>
         public uint U16BE(long o) => (uint)((Byte(o) << 8) | Byte(o + 1)) & 0xFFFF;
+        /// <summary>A 2-byte number, smallest byte first.</summary>
         public uint U16LE(long o) => (uint)(Byte(o) | (Byte(o + 1) << 8)) & 0xFFFF;
+        /// <summary>A 4-byte number, largest byte first.</summary>
         public uint U32BE(long o) => ((uint)Byte(o) << 24) | ((uint)Byte(o + 1) << 16) | ((uint)Byte(o + 2) << 8) | (uint)Byte(o + 3);
+        /// <summary>A 4-byte number, smallest byte first.</summary>
         public uint U32LE(long o) => (uint)Byte(o) | ((uint)Byte(o + 1) << 8) | ((uint)Byte(o + 2) << 16) | ((uint)Byte(o + 3) << 24);
+        /// <summary>An 8-byte number, smallest byte first.</summary>
         public ulong U64LE(long o) => U32LE(o) | ((ulong)U32LE(o + 4) << 32);
+        /// <summary>An 8-byte number, largest byte first.</summary>
         public ulong U64BE(long o) => ((ulong)U32BE(o) << 32) | U32BE(o + 4);
 
+        /// <summary>True when the bytes at a place are this text.</summary>
         public bool Ascii(long o, string text)
         {
             for (var i = 0; i < text.Length; i++) if (Byte(o + i) != text[i]) return false;
@@ -90,6 +108,7 @@ namespace Kudurescue.Core
             return -1;
         }
 
+        /// <summary>Where the bytes are found in data, or -1.</summary>
         public static int IndexOf(byte[] data, byte[] needle, int start = 0)
         {
             for (var i = start; i <= data.Length - needle.Length; i++)
@@ -106,10 +125,14 @@ namespace Kudurescue.Core
     /// <summary>What a parser found at a position: the file's type and, when its structure says so, its exact length.</summary>
     public sealed class Carved
     {
+        /// <summary>The file's ending, like ".png".</summary>
         public string Extension;
+        /// <summary>How long it is (0 when it can't be told).</summary>
         public long Length;      // 0 = unknown: the file is taken up to the next file found (or a limit)
+        /// <summary>The most taken when the length can't be told.</summary>
         public long MaxLength;   // the limit used when the length is unknown
 
+        /// <summary>True when the length was told from the file itself.</summary>
         public bool Exact => Length > 0;
     }
 
@@ -119,7 +142,9 @@ namespace Kudurescue.Core
     /// </summary>
     public static class Carvers
     {
+        /// <summary>A megabyte.</summary>
         private const long MB = 1024 * 1024;
+        /// <summary>The biggest file taken (8 GB): anything longer is a false find.</summary>
         private const long MaxFile = 8L * 1024 * MB;
 
         /// <summary>Checks for a file starting at <paramref name="start"/>. <paramref name="head"/> holds its first bytes (at least 16 when available).</summary>
@@ -169,7 +194,9 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A find whose length can't be told (up to max).</summary>
         private static Carved Unknown(string ext, long max) => new Carved { Extension = ext, MaxLength = max };
+        /// <summary>A find of this length (null when it's longer than any real file).</summary>
         private static Carved Done(string ext, long length) => length > 0 && length <= MaxFile ? new Carved { Extension = ext, Length = length } : null;
 
         // ------------------------------------------------------------------ pictures
@@ -216,6 +243,7 @@ namespace Kudurescue.Core
             return null;
         }
 
+        /// <summary>A PNG: its parts up to IEND.</summary>
         private static Carved Png(ByteSource s, long start)
         {
             var pos = start + 8;
@@ -232,6 +260,7 @@ namespace Kudurescue.Core
             return null;
         }
 
+        /// <summary>A GIF: its blocks up to the end mark.</summary>
         private static Carved Gif(ByteSource s, long start)
         {
             var flags = s.Byte(start + 10);
@@ -256,6 +285,7 @@ namespace Kudurescue.Core
             return null;
         }
 
+        /// <summary>A BMP: the size in its header, when it fits.</summary>
         private static Carved Bmp(ByteSource s, long start)
         {
             var size = s.U32LE(start + 2);
@@ -319,6 +349,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ documents
 
+        /// <summary>A PDF: up to its last %%EOF.</summary>
         private static Carved Pdf(ByteSource s, long start)
         {
             var eof = Encoding.ASCII.GetBytes("%%EOF");
@@ -409,6 +440,7 @@ namespace Kudurescue.Core
             return Done(ext, length);
         }
 
+        /// <summary>An RTF: up to the closing brace that matches the first.</summary>
         private static Carved Rtf(ByteSource s, long start)
         {
             var depth = 0;
@@ -451,6 +483,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ audio and video
 
+        /// <summary>An MP4, MOV, M4A, HEIC...: its boxes, and its kind from its brand.</summary>
         private static Carved IsoMedia(ByteSource s, long start, byte[] head)
         {
             var brand = Encoding.ASCII.GetString(head, 8, 4);
@@ -473,6 +506,7 @@ namespace Kudurescue.Core
             return moov || mdat ? Done(Brand(brand), Math.Min(pos, limit) - start) : null;
         }
 
+        /// <summary>The file ending for a brand of MP4 (like "qt  " for .mov).</summary>
         private static string Brand(string brand)
         {
             if (brand.StartsWith("qt")) return ".mov";
@@ -483,6 +517,7 @@ namespace Kudurescue.Core
             return ".mp4";
         }
 
+        /// <summary>A RIFF file (WAV, AVI, WebP): the size in its header.</summary>
         private static Carved Riff(ByteSource s, long start)
         {
             var size = s.U32LE(start + 4);
@@ -506,6 +541,7 @@ namespace Kudurescue.Core
             return Done(ext, pos + segment - start);
         }
 
+        /// <summary>Reads an MKV number of a few bytes (its length is in its first byte).</summary>
         private static bool Vint(ByteSource s, ref long pos, bool keepMarker, out long value)
         {
             var first = s.Byte(pos);
@@ -528,8 +564,11 @@ namespace Kudurescue.Core
             return true;
         }
 
+        /// <summary>MP3 bit rates (MPEG-1).</summary>
         private static readonly int[] Mp3BitratesV1 = { 0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0 };
+        /// <summary>MP3 bit rates (MPEG-2).</summary>
         private static readonly int[] Mp3BitratesV2 = { 0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0 };
+        /// <summary>MP3 sample rates.</summary>
         private static readonly int[] Mp3Rates = { 44100, 48000, 32000, 0 };
 
         /// <summary>MP3: the ID3 tag (if any), then audio frames whose lengths follow from their headers.</summary>
@@ -586,6 +625,7 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ archives, data, programs
 
+        /// <summary>A 7z archive: its header says where its end is.</summary>
         private static Carved SevenZip(ByteSource s, long start)
         {
             var offset = (long)s.U64LE(start + 12);
@@ -593,6 +633,7 @@ namespace Kudurescue.Core
             return offset < 0 || size <= 0 || offset > MaxFile ? null : Done(".7z", 32 + offset + size);
         }
 
+        /// <summary>An SQLite file: its page size times its page count.</summary>
         private static Carved Sqlite(ByteSource s, long start)
         {
             long page = s.U16BE(start + 16);
@@ -623,6 +664,7 @@ namespace Kudurescue.Core
             return Done((characteristics & 0x2000) != 0 ? ".dll" : ".exe", end);
         }
 
+        /// <summary>A font: its tables' ends.</summary>
         private static Carved Font(ByteSource s, long start, string ext)
         {
             var tables = s.U16BE(start + 4);
@@ -642,10 +684,15 @@ namespace Kudurescue.Core
 
         // ------------------------------------------------------------------ helpers
 
+        /// <summary>True when the bytes start with these.</summary>
         private static bool Starts(byte[] b, params byte[] magic) => b.Length >= magic.Length && !magic.Where((m, i) => b[i] != m).Any();
+        /// <summary>True when the bytes at a place are this text.</summary>
         private static bool Text(byte[] b, int offset, string text) => b.Length >= offset + text.Length && Encoding.ASCII.GetString(b, offset, text.Length) == text;
+        /// <summary>A 4-byte number, largest byte first.</summary>
         private static uint BE32(byte[] b, int o) => ((uint)b[o] << 24) | ((uint)b[o + 1] << 16) | ((uint)b[o + 2] << 8) | b[o + 3];
+        /// <summary>Bytes with A-Z made lower case.</summary>
         private static byte[] Lower(byte[] b) => b.Select(x => x >= 'A' && x <= 'Z' ? (byte)(x + 32) : x).ToArray();
+        /// <summary>True when the text is in the first window bytes from start.</summary>
         private static bool Contains(ByteSource s, long start, int window, string text) =>
             Encoding.ASCII.GetString(s.Read(start, window)).Contains(text);
     }

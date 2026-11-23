@@ -1,3 +1,4 @@
+// A file system (NTFS, FAT, exFAT, a Previous Version, the deep scan) and opening the right one for a drive.
 using System;
 using System.IO;
 using System.Text;

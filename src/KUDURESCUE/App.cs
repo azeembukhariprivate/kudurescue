@@ -1,3 +1,5 @@
+// Where KUDURESCUE starts: the command line (a drive to scan, a deep scan, a saved scan to open, the self-test) and the
+// main window.
 using System;
 using System.Linq;
 using System.Windows;
@@ -50,8 +52,10 @@ namespace Kudurescue
 
     public sealed class App : Application
     {
+        /// <summary>The running app.</summary>
         public static App Instance => (App)Current;
 
+        /// <summary>Starts the app, scanning or opening what was given.</summary>
         public int Run(string scanDrive, bool deep, string drive, string savedScan)
         {
             Startup += (s, e) =>
@@ -68,6 +72,7 @@ namespace Kudurescue
             return Run();
         }
 
+        /// <summary>Runs the self-test instead of the app, and returns its result as the exit code.</summary>
         public int RunSelfTest()
         {
             var code = 1;
@@ -82,6 +87,10 @@ namespace Kudurescue
             return code;
         }
 
+        /// <summary>
+        /// What both ways of starting need: closing with the last window, the theme, the language and the error
+        /// handler.
+        /// </summary>
         internal void Init()
         {
             ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -92,6 +101,9 @@ namespace Kudurescue
             ThemeManager.WatchSystem();
         }
 
+        /// <summary>
+        /// Shows an error that wasn't expected instead of closing the app (the self-test keeps it as a failure).
+        /// </summary>
         private void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
         {
             if (SelfTest.Running)

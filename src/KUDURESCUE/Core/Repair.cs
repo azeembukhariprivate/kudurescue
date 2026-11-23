@@ -1,3 +1,5 @@
+// Repairing damaged pictures: a JPEG closed where the damage starts (its header must be whole), a PNG's rows before the
+// damage kept and the rest made grey; and CRC32 for PNG and ZIP parts.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -18,6 +20,7 @@ namespace Kudurescue.Core
         public static readonly IReadOnlyCollection<string> Kinds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { ".jpg", ".jpeg", ".jpe", ".jfif", ".png", ".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm" };
 
+        /// <summary>True when files of this ending can be repaired.</summary>
         public static bool CanTry(string extension) => Kinds.Contains(extension ?? string.Empty);
 
         /// <summary>
@@ -110,6 +113,7 @@ namespace Kudurescue.Core
 
         // ================================================================== PNG
 
+        /// <summary>The first bytes of every PNG.</summary>
         private static readonly byte[] PngSignature = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
 
         /// <summary>
@@ -279,6 +283,7 @@ namespace Kudurescue.Core
             return output.ToArray();
         }
 
+        /// <summary>Writes a PNG part with its CRC.</summary>
         private static void WriteChunk(Stream s, string type, byte[] chunk)
         {
             var head = new byte[8];
@@ -292,6 +297,7 @@ namespace Kudurescue.Core
             s.Write(crc, 0, 4);
         }
 
+        /// <summary>Part of a byte array.</summary>
         private static byte[] Slice(byte[] data, int start, int length)
         {
             var b = new byte[length];
@@ -299,8 +305,10 @@ namespace Kudurescue.Core
             return b;
         }
 
+        /// <summary>A 4-byte number, largest byte first.</summary>
         internal static uint ReadBig(byte[] d, int p) => (uint)(d[p] << 24 | d[p + 1] << 16 | d[p + 2] << 8 | d[p + 3]);
 
+        /// <summary>Writes a 4-byte number, largest byte first.</summary>
         internal static void WriteBig(byte[] d, int p, uint v)
         {
             d[p] = (byte)(v >> 24);
@@ -313,6 +321,7 @@ namespace Kudurescue.Core
     /// <summary>The CRC-32 used by PNG and ZIP.</summary>
     public static class Crc32
     {
+        /// <summary>The CRC32 table, made once.</summary>
         private static readonly uint[] Table = Enumerable.Range(0, 256).Select(n =>
         {
             var c = (uint)n;
@@ -320,6 +329,7 @@ namespace Kudurescue.Core
             return c;
         }).ToArray();
 
+        /// <summary>The CRC32 of part of the data.</summary>
         public static uint Of(byte[] data, int start, int length)
         {
             var c = 0xFFFFFFFF;

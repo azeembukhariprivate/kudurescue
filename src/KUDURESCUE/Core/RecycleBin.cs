@@ -1,3 +1,4 @@
+// The Recycle Bin of a drive: each item with its original name and folder, and when it was deleted.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,6 +13,7 @@ namespace Kudurescue.Core
     /// </summary>
     public static class RecycleBin
     {
+        /// <summary>What's in a drive's Recycle Bin.</summary>
         public static List<FoundFile> List(string drive)
         {
             var files = new List<FoundFile>();

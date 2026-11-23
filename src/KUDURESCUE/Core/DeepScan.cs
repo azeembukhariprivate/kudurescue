@@ -1,3 +1,5 @@
+// The deep scan: reads the free space (or a whole drive) for files by their first bytes, when the file system's own
+// list doesn't have them any more.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,17 +18,22 @@ namespace Kudurescue.Core
     /// <summary>Areas of a drive, sorted, for asking how much of a stretch is free.</summary>
     public sealed class FreeMap
     {
+        /// <summary>The free ranges, in order.</summary>
         private readonly List<(long Start, long End)> _ranges;
 
+        /// <summary>A map of these free ranges (joined where they touch).</summary>
         public FreeMap(IEnumerable<(long Start, long Length)> ranges)
         {
             _ranges = ranges.Where(r => r.Length > 0).Select(r => (r.Start, r.Start + r.Length)).ToList();
             Bytes = _ranges.Sum(r => r.End - r.Start);
         }
 
+        /// <summary>A map where everything is free (a whole drive with no file system).</summary>
         public static FreeMap Everything(long length) => new FreeMap(new[] { (0L, length) });
 
+        /// <summary>How many bytes are free.</summary>
         public long Bytes { get; }
+        /// <summary>The free ranges.</summary>
         public IReadOnlyList<(long Start, long End)> Ranges => _ranges;
 
         /// <summary>How many bytes of [start, start + length) are NOT free.</summary>
@@ -54,11 +61,16 @@ namespace Kudurescue.Core
     /// </summary>
     public sealed class DeepVolume : IVolume
     {
+        /// <summary>Files are looked for at every 512 bytes.</summary>
         public const int Unit = 512;
+        /// <summary>The file system, when there is one.</summary>
         private readonly IVolume _inner;
+        /// <summary>True when closing this closes the drive.</summary>
         private readonly bool _ownsDevice;
+        /// <summary>The free space, once worked out.</summary>
         private FreeMap _free;
 
+        /// <summary>A deep scan of a drive (of the free space when the file system is known).</summary>
         public DeepVolume(IBlockDevice device, IVolume inner, bool ownsDevice = true)
         {
             Device = device;
@@ -66,10 +78,15 @@ namespace Kudurescue.Core
             _ownsDevice = ownsDevice;
         }
 
+        /// <summary>The drive.</summary>
         public IBlockDevice Device { get; }
+        /// <summary>The file system, or null.</summary>
         public IVolume Inner => _inner;
+        /// <summary>What's read, in words.</summary>
         public string FormatName => _inner == null ? "the whole drive" : "free space on " + _inner.FormatName;
+        /// <summary>The deep scan's unit.</summary>
         public int ClusterSize => Unit;
+        /// <summary>Where a unit starts.</summary>
         public long ClusterOffset(long cluster) => cluster * Unit;
 
         /// <summary>The free areas to search (computed once).</summary>
@@ -97,9 +114,12 @@ namespace Kudurescue.Core
         /// <summary>How far the scan has got (a byte offset); everything before it has been searched.</summary>
         public long Position { get; private set; }
 
+        /// <summary>True once the whole space was read.</summary>
         public bool Finished { get; private set; }
 
+        /// <summary>Places already found (each file once).</summary>
         private readonly HashSet<long> _known = new HashSet<long>();
+        /// <summary>How many of each kind were found (for names like "Photo 12").</summary>
         private readonly Dictionary<FileKind, int> _counters = new Dictionary<FileKind, int>();
 
         /// <summary>Files found before (when resuming): they aren't added again, and new names carry on numbering.</summary>
@@ -113,6 +133,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Reads the free space for files, adding each found.</summary>
         public void Scan(QuickScan scan, CancellationToken cancel)
         {
             scan.ProgressLabel = "Searched";
@@ -176,6 +197,7 @@ namespace Kudurescue.Core
             Finished = true;
         }
 
+        /// <summary>Part of a byte array.</summary>
         private static byte[] Slice(byte[] b, int offset, int count)
         {
             var r = new byte[count];
@@ -200,6 +222,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Adds a file found, named by its kind and number.</summary>
         private void Add(QuickScan scan, FreeMap free, Dictionary<FileKind, int> counters, long start, long length, string ext, bool exact)
         {
             if (!_known.Add(start)) return; // found before this scan was resumed
@@ -225,6 +248,7 @@ namespace Kudurescue.Core
             scan.Add(f);
         }
 
+        /// <summary>A kind's name for one file ("Photo", "Video"...).</summary>
         private static string Singular(FileKind kind)
         {
             switch (kind)
@@ -242,6 +266,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Closes the drive when it's this scan's own.</summary>
         public void Dispose()
         {
             _inner?.Dispose();

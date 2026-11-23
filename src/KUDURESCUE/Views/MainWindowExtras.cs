@@ -1,3 +1,4 @@
+// The main window's other ways in: disk images (and their partitions), Previous Versions, and saved scans.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -14,17 +15,24 @@ namespace Kudurescue.Views
     /// <summary>Where a scan's files came from, so a saved scan can be opened again.</summary>
     public sealed class ScanSource
     {
+        /// <summary>The drive's letter.</summary>
         public string Drive;
+        /// <summary>The disk image file.</summary>
         public string ImagePath;
+        /// <summary>Where the partition starts in the image.</summary>
         public long PartOffset;
+        /// <summary>How big the partition is.</summary>
         public long PartLength;
+        /// <summary>The Previous Version.</summary>
         public Snapshot Snapshot;
     }
 
     /// <summary>Drive images, Previous Versions snapshots, and saving and opening scans.</summary>
     public sealed partial class MainWindow
     {
+        /// <summary>What the scan reads.</summary>
         private ScanSource _source;
+        /// <summary>Each drive's Previous Versions, once listed.</summary>
         private readonly Dictionary<string, List<Snapshot>> _snapshotCache = new Dictionary<string, List<Snapshot>>();
 
         /// <summary>Opens with this drive chosen (from the drive right-click menu).</summary>
@@ -43,6 +51,7 @@ namespace Kudurescue.Views
 
         // ================================================================== drive images
 
+        /// <summary>Opens a disk image (choosing a partition when it has more than one) and scans it.</summary>
         private void OpenImage()
         {
             var path = Dialogs.PickFile(this, "Open a drive image", DriveImages.FileFilter);
@@ -199,6 +208,7 @@ namespace Kudurescue.Views
 
         // ================================================================== Previous Versions
 
+        /// <summary>Fills the drive's Previous Versions.</summary>
         private void FillSnapshots(StackPanel panel)
         {
             if (_drive == null || _drive.Size <= 0) return;
@@ -228,6 +238,7 @@ namespace Kudurescue.Views
                 .Res(Border.BorderBrushProperty, "BorderBrush"));
         }
 
+        /// <summary>A drive's Previous Versions (listed once).</summary>
         private List<Snapshot> Snapshots(string drive)
         {
             if (_snapshotCache.TryGetValue(drive, out var list)) return list;
@@ -237,6 +248,7 @@ namespace Kudurescue.Views
             return list;
         }
 
+        /// <summary>Looks through a Previous Version for files deleted or changed since.</summary>
         private void BrowseSnapshot(List<Snapshot> snapshots)
         {
             var snapshot = snapshots.Count == 1 ? snapshots[0]
@@ -279,6 +291,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>A saved scan of these files.</summary>
         public SavedScan BuildSaved(List<FoundFile> files, IVolume volume)
         {
             var saved = new SavedScan
@@ -300,6 +313,7 @@ namespace Kudurescue.Views
             return saved;
         }
 
+        /// <summary>Asks for a saved scan and opens it.</summary>
         private void PickSavedScan()
         {
             if (_results != null && _results.IsRecovering) return;
@@ -377,6 +391,7 @@ namespace Kudurescue.Views
             ShowSaved(saved, volume);
         }
 
+        /// <summary>Shows a saved scan (a deep scan that didn't finish can go on).</summary>
         private void ShowSaved(SavedScan saved, IVolume volume)
         {
             var label = saved.Drive ?? Path.GetFileName(saved.ImagePath ?? string.Empty);

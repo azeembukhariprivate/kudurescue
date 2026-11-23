@@ -9,8 +9,10 @@ namespace Kudurescue.Core
     /// </summary>
     public static class ShellIntegration
     {
+        /// <summary>Where the right-click menu entry for drives is kept.</summary>
         private const string Key = @"Software\Classes\Drive\shell\KUDURESCUE";
 
+        /// <summary>Adds the right-click menu entry for drives, for this user only.</summary>
         public static void Register()
         {
             try
@@ -26,6 +28,7 @@ namespace Kudurescue.Core
             catch (Exception ex) when (ex is UnauthorizedAccessException || ex is System.Security.SecurityException) { }
         }
 
+        /// <summary>Takes the menu entry away again.</summary>
         public static void Remove()
         {
             try { Registry.CurrentUser.DeleteSubKeyTree(Key, false); }

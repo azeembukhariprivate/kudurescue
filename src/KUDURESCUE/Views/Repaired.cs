@@ -1,3 +1,4 @@
+// Saving a repaired photo again through Windows' reader, so every program opens it.
 using System;
 using System.IO;
 using System.Windows.Media.Imaging;

@@ -1,3 +1,4 @@
+// A Previous Version as something to scan: files that are in it but deleted or changed now.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -9,12 +10,18 @@ namespace Kudurescue.Core
     /// <summary>A Windows "Previous Versions" snapshot (Volume Shadow Copy) of a drive.</summary>
     public sealed class Snapshot
     {
+        /// <summary>The drive, like "C:".</summary>
         public string Drive { get; set; }        // "C:"
+        /// <summary>Where Windows keeps it.</summary>
         public string DevicePath { get; set; }   // \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy3
+        /// <summary>When it was made.</summary>
         public DateTime Created { get; set; }
+        /// <summary>Its id.</summary>
         public string Id { get; set; }
 
+        /// <summary>Its top folder.</summary>
         public string Root => DevicePath.TrimEnd('\\') + "\\";
+        /// <summary>When it was made, in words.</summary>
         public string Title => Created.ToLocalTime().ToString("dddd d MMMM yyyy, HH:mm");
     }
 
@@ -24,12 +31,14 @@ namespace Kudurescue.Core
     /// </summary>
     public sealed class SnapshotVolume : IVolume
     {
+        /// <summary>Folders left out (Windows and programs' own).</summary>
         private static readonly HashSet<string> Skipped = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "Windows", "Program Files", "Program Files (x86)", "ProgramData", "System Volume Information", "$Recycle.Bin",
             "Recovery", "$WINDOWS.~BT", "$Windows.~WS", "$WinREAgent", "AppData", "PerfLogs", "Config.Msi", "MSOCache"
         };
 
+        /// <summary>A Previous Version compared with the drive now.</summary>
         public SnapshotVolume(string snapshotRoot, string liveRoot, DateTime taken)
         {
             SnapshotRoot = snapshotRoot.TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
@@ -37,16 +46,23 @@ namespace Kudurescue.Core
             Taken = taken;
         }
 
+        /// <summary>The Previous Version's top folder.</summary>
         public string SnapshotRoot { get; }
+        /// <summary>The drive's top folder now.</summary>
         public string LiveRoot { get; }
+        /// <summary>When it was made.</summary>
         public DateTime Taken { get; }
 
         // Files are copied from the snapshot, never read from the drive directly.
         public IBlockDevice Device => null;
+        /// <summary>The kind's name.</summary>
         public string FormatName => "Previous Versions";
+        /// <summary>Not used (files are read whole).</summary>
         public int ClusterSize => 4096;
+        /// <summary>Not used.</summary>
         public long ClusterOffset(long cluster) => cluster * ClusterSize;
 
+        /// <summary>Lists the files that are deleted or changed since.</summary>
         public void Scan(QuickScan scan, CancellationToken cancel)
         {
             scan.ProgressLabel = "Folders";
@@ -81,8 +97,10 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A folder and a name joined.</summary>
         private static string Join(string a, string b) => a.Length == 0 ? b : a + Path.DirectorySeparatorChar + b;
 
+        /// <summary>A file in the Previous Version, when it's deleted or different now (null when the same).</summary>
         private FoundFile Compare(string snapshotFile, string relative, string folder)
         {
             var old = new FileInfo(snapshotFile);
@@ -108,6 +126,7 @@ namespace Kudurescue.Core
             };
         }
 
+        /// <summary>Nothing to close.</summary>
         public void Dispose() { }
     }
 }

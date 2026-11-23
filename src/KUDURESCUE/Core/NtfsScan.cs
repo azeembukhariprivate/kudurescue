@@ -1,3 +1,5 @@
+// The quick scan for NTFS: reads every record of the file table, keeping deleted files with their folders and data, and
+// the chance each comes back whole.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,30 +14,44 @@ namespace Kudurescue.Core
     /// </summary>
     internal sealed class NtfsScanner
     {
+        /// <summary>The file table's record of the top folder.</summary>
         public const long RootRecord = 5;
+        /// <summary>The first record of the person's own files (the ones before are NTFS's own).</summary>
         private const int FirstUserRecord = 24;
 
+        /// <summary>The drive.</summary>
         private readonly NtfsVolume _volume;
+        /// <summary>The scan the files are added to.</summary>
         private readonly QuickScan _scan;
+        /// <summary>Each folder's name and parent, by record.</summary>
         private readonly Dictionary<long, DirEntry> _dirs = new Dictionary<long, DirEntry>();
+        /// <summary>Each folder's path, once worked out.</summary>
         private readonly Dictionary<long, string> _folderCache = new Dictionary<long, string>();
+        /// <summary>Each file's folder record (to put it in its folder once all folders are known).</summary>
         private readonly Dictionary<FoundFile, (long Parent, int Sequence)> _parents = new Dictionary<FoundFile, (long, int)>();
 
         private sealed class DirEntry
         {
+            /// <summary>The folder's name.</summary>
             public string Name;
+            /// <summary>Its parent folder's record.</summary>
             public long Parent;
+            /// <summary>That record's sequence number when this folder was made.</summary>
             public int ParentSequence;
+            /// <summary>Its own sequence number.</summary>
             public int Sequence;
+            /// <summary>True when it's in use (not deleted).</summary>
             public bool InUse;
         }
 
+        /// <summary>A scan of this drive into this list.</summary>
         public NtfsScanner(NtfsVolume volume, QuickScan scan)
         {
             _volume = volume;
             _scan = scan;
         }
 
+        /// <summary>Reads the folders, then the deleted files, adding each one found.</summary>
         public void Run(CancellationToken cancel)
         {
             _scan.ProgressLabel = "Index entries";
@@ -53,6 +69,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Reads every record once, keeping the folders' names and parents.</summary>
         private void ReadIndex(CancellationToken cancel)
         {
             var size = _volume.RecordSize;
@@ -97,6 +114,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Adds a deleted file's record, when it has a name and data.</summary>
         private void Consider(FileRecord record)
         {
             if (record.IsExtension) return;
@@ -128,6 +146,7 @@ namespace Kudurescue.Core
             _scan.Add(file);
         }
 
+        /// <summary>A file found from its record, with where its data is and its chance.</summary>
         private FoundFile Describe(FileRecord record, FileNameInfo name)
         {
             NtfsAttribute data;

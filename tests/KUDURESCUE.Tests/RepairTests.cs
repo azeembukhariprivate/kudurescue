@@ -1,3 +1,4 @@
+// The tests for repairs: damaged JPEGs and PNGs, and Word, Excel and PowerPoint files with lost parts.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,6 +13,7 @@ namespace Kudurescue.Tests
     /// <summary>Repairing partly whole files: made-up photos and Office files, damaged on purpose as a reused cluster would.</summary>
     internal static class RepairTests
     {
+        /// <summary>Runs the repair tests.</summary>
         public static void Run(Action<bool, string> check)
         {
             Jpeg(check);
@@ -22,6 +24,7 @@ namespace Kudurescue.Tests
             DamagedParts(check);
         }
 
+        /// <summary>Bytes that look like noise.</summary>
         private static byte[] Noise(int n, int seed)
         {
             var b = new byte[n];
@@ -40,6 +43,7 @@ namespace Kudurescue.Tests
 
         // ------------------------------------------------------------------ JPEG
 
+        /// <summary>A JPEG segment.</summary>
         private static byte[] Segment(byte marker, byte[] body) =>
             new byte[] { 0xFF, marker, (byte)((body.Length + 2) >> 8), (byte)(body.Length + 2) }.Concat(body).ToArray();
 
@@ -56,6 +60,7 @@ namespace Kudurescue.Tests
             return head.Concat(picture).Concat(new byte[] { 0xFF, 0xD9 }).ToArray();
         }
 
+        /// <summary>A JPEG is closed where its damage starts.</summary>
         private static void Jpeg(Action<bool, string> check)
         {
             var photo = JpegFile(20000);
@@ -85,6 +90,7 @@ namespace Kudurescue.Tests
 
         // ------------------------------------------------------------------ PNG
 
+        /// <summary>A PNG part with its CRC.</summary>
         private static byte[] Chunk(string type, byte[] data)
         {
             var head = new byte[8];
@@ -140,6 +146,7 @@ namespace Kudurescue.Tests
             return rows;
         }
 
+        /// <summary>A PNG keeps its rows before the damage, the rest grey.</summary>
         private static void Png(Action<bool, string> check)
         {
             var picture = PngFile(200, 300, 6);
@@ -175,6 +182,7 @@ namespace Kudurescue.Tests
 
         // ------------------------------------------------------------------ Office
 
+        /// <summary>A zip file holding these parts.</summary>
         private static byte[] Zip(params (string Name, string Text)[] parts)
         {
             var output = new MemoryStream();
@@ -207,6 +215,7 @@ namespace Kudurescue.Tests
             throw new InvalidDataException(name + " not in the package");
         }
 
+        /// <summary>A zip file's parts as text.</summary>
         private static Dictionary<string, string> Unzip(byte[] zip)
         {
             using (var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read))
@@ -237,13 +246,17 @@ namespace Kudurescue.Tests
             foreach (var xml in parts.Where(p => p.Key.EndsWith(".xml") || p.Key.EndsWith(".rels"))) XDocument.Parse(xml.Value); // all still XML
         }
 
+        /// <summary>The list of part kinds every Office file has.</summary>
         private const string Types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
             "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Default Extension=\"png\" ContentType=\"image/png\"/>{0}</Types>";
+        /// <summary>A part's kind in that list.</summary>
         private static string Override(string part, string type) => "<Override PartName=\"/" + part + "\" ContentType=\"application/vnd.openxmlformats-officedocument." + type + "\"/>";
+        /// <summary>A list of links between parts.</summary>
         private static string Rels(params (string Id, string Type, string Target)[] rels) =>
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
             string.Concat(rels.Select(r => "<Relationship Id=\"" + r.Id + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/" + r.Type + "\" Target=\"" + r.Target + "\"/>")) + "</Relationships>";
 
+        /// <summary>A damaged Word document keeps its text.</summary>
         private static void Word(Action<bool, string> check)
         {
             var paragraphs = string.Concat(Enumerable.Range(1, 400).Select(i => "<w:p><w:r><w:t>Paragraph number " + i + " &amp; more " + new string('x', i % 50) + "</w:t></w:r></w:p>"));
@@ -286,6 +299,7 @@ namespace Kudurescue.Tests
             check(Repair.Make(Damage(docx, body.Start, body.Length), ".docx", new List<(long, long)> { (body.Start, body.Length) }) == null, "no repair when all the text is lost");
         }
 
+        /// <summary>A damaged Excel workbook keeps its whole rows.</summary>
         private static void Excel(Action<bool, string> check)
         {
             const string ns = "xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:x14ac=\"http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac\"";
@@ -324,6 +338,7 @@ namespace Kudurescue.Tests
             Consistent(check, repaired, "workbook");
         }
 
+        /// <summary>A damaged PowerPoint presentation leaves out lost slides.</summary>
         private static void PowerPoint(Action<bool, string> check)
         {
             const string ns = "xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
@@ -353,6 +368,7 @@ namespace Kudurescue.Tests
 
         // ------------------------------------------------------------------ where the damage is
 
+        /// <summary>Parts are found by their headers and checked by CRC.</summary>
         private static void DamagedParts(Action<bool, string> check)
         {
             // Clusters 100-199 of a file at clusters 5000-5199 are used by other files now: 4096-byte clusters.

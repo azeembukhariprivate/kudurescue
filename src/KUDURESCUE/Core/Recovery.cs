@@ -1,3 +1,5 @@
+// Getting files back: writing each one to another drive (never the one it's found on), with folders, times, partly
+// whole files when asked, NTFS-compressed files, and repaired copies.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -8,8 +10,11 @@ namespace Kudurescue.Core
 {
     public sealed class RecoverOptions
     {
+        /// <summary>The folder to save to (never on the drive being recovered from).</summary>
         public string Destination { get; set; }
+        /// <summary>Keep the files' folders.</summary>
         public bool KeepFolders { get; set; } = true;
+        /// <summary>Also save files that are only partly whole.</summary>
         public bool RecoverPartial { get; set; } = true;
         /// <summary>Partly whole photos and Office files also get a repaired copy, "name (repaired).ext".</summary>
         public bool Repair { get; set; } = true;
@@ -20,22 +25,31 @@ namespace Kudurescue.Core
 
     public sealed class RecoverProblem
     {
+        /// <summary>The file.</summary>
         public string File { get; set; }
+        /// <summary>What went wrong.</summary>
         public string Reason { get; set; }
     }
 
     public sealed class RecoverResult
     {
+        /// <summary>How many came back whole.</summary>
         public int Recovered;
+        /// <summary>How many came back in part.</summary>
         public int Partial;
+        /// <summary>How many were skipped.</summary>
         public int Skipped;
+        /// <summary>How many bytes were saved.</summary>
         public long Bytes;
+        /// <summary>How many sectors couldn't be read (filled with zeros).</summary>
         public int BadSectors;
         /// <summary>Partly whole files that got a repaired copy too.</summary>
         public int Repaired;
         /// <summary>Repaired copies made, as their paths.</summary>
         public readonly List<string> RepairedFiles = new List<string>();
+        /// <summary>What went wrong, file by file.</summary>
         public readonly List<RecoverProblem> Problems = new List<RecoverProblem>();
+        /// <summary>True when it was stopped.</summary>
         public bool Cancelled;
     }
 
@@ -223,6 +237,7 @@ namespace Kudurescue.Core
             return f.Compressed ? WriteCompressed(volume, f, output, total, progress, cancel) : WritePlain(volume, f, output, total, progress, cancel);
         }
 
+        /// <summary>Writes a file from its runs on the drive; returns how many sectors couldn't be read.</summary>
         private static int WritePlain(IVolume volume, FoundFile f, Stream output, long total, Action<long> progress, CancellationToken cancel)
         {
             var cluster = volume.ClusterSize;
@@ -261,6 +276,7 @@ namespace Kudurescue.Core
             return bad;
         }
 
+        /// <summary>Writes an NTFS-compressed file, unpacking each piece.</summary>
         private static int WriteCompressed(IVolume volume, FoundFile f, Stream output, long total, Action<long> progress, CancellationToken cancel)
         {
             var cluster = volume.ClusterSize;
@@ -318,6 +334,7 @@ namespace Kudurescue.Core
             return list;
         }
 
+        /// <summary>Copies a file from the Recycle Bin (it's still a whole file there).</summary>
         private static void CopyFromRecycleBin(FoundFile f, string target)
         {
             if (f.IsFolder)
@@ -328,6 +345,7 @@ namespace Kudurescue.Core
             File.Copy(f.RecyclePath, target, false);
         }
 
+        /// <summary>Copies a folder from the Recycle Bin.</summary>
         private static void CopyFolder(string source, string target)
         {
             Directory.CreateDirectory(target);
@@ -335,6 +353,7 @@ namespace Kudurescue.Core
             foreach (var dir in Directory.GetDirectories(source)) CopyFolder(dir, Path.Combine(target, Path.GetFileName(dir)));
         }
 
+        /// <summary>Gives the saved file its times.</summary>
         private static void SetTimes(string path, FoundFile f)
         {
             try
@@ -347,6 +366,7 @@ namespace Kudurescue.Core
             catch (ArgumentException) { }
         }
 
+        /// <summary>Removes a file if it can (quietly).</summary>
         private static void TryDelete(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); }

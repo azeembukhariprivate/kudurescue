@@ -1,3 +1,4 @@
+// An NTFS drive: its boot sector, the file table and where it is, reading records, and the map of used clusters.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -9,8 +10,10 @@ namespace Kudurescue.Core
     /// <summary>An NTFS drive opened read-only: its MFT (the index of every file) and its map of used clusters.</summary>
     public sealed class NtfsVolume : IVolume, IFreeSpace
     {
+        /// <summary>True when closing this closes the drive.</summary>
         private readonly bool _ownsDevice;
 
+        /// <summary>An NTFS drive (made by Open).</summary>
         private NtfsVolume(IBlockDevice device, NtfsBoot boot, bool ownsDevice)
         {
             Device = device;
@@ -18,22 +21,38 @@ namespace Kudurescue.Core
             _ownsDevice = ownsDevice;
         }
 
+        /// <summary>The drive.</summary>
         public IBlockDevice Device { get; }
+        /// <summary>Its boot sector.</summary>
         public NtfsBoot Boot { get; }
+        /// <summary>Where the file table is.</summary>
         public List<DataRun> MftRuns { get; private set; }
+        /// <summary>How big it is.</summary>
         public long MftSize { get; private set; }
+        /// <summary>The map of used clusters.</summary>
         public ClusterBitmap Bitmap { get; private set; }
 
+        /// <summary>The file system's name.</summary>
         public string FormatName => "NTFS";
+        /// <summary>How big a cluster is.</summary>
         public int ClusterSize => Boot.ClusterSize;
+        /// <summary>Where a cluster starts, in bytes.</summary>
         public long ClusterOffset(long cluster) => cluster * ClusterSize;
+        /// <summary>Lists the deleted files.</summary>
         public void Scan(QuickScan scan, CancellationToken cancel) => new NtfsScanner(this, scan).Run(cancel);
 
+        /// <summary>The free ranges of the drive.</summary>
         public IEnumerable<(long Start, long Length)> FreeRanges() =>
             Bitmap.FreeRuns().Select(r => (r.Start * ClusterSize, r.Length * ClusterSize));
+        /// <summary>How big each record is.</summary>
         public int RecordSize => Boot.RecordSize;
+        /// <summary>How many records there are.</summary>
         public long RecordCount => MftSize / RecordSize;
 
+        /// <summary>
+        /// Opens a drive as NTFS, or null when it isn't (a drive locked with BitLocker is refused with a plain
+        /// message).
+        /// </summary>
         public static NtfsVolume Open(IBlockDevice device, bool ownsDevice = true)
         {
             var sector = new byte[Math.Max(512, device.SectorSize)];
@@ -47,6 +66,7 @@ namespace Kudurescue.Core
             return volume;
         }
 
+        /// <summary>Finds where the file table is from its own first record.</summary>
         private void LoadMft()
         {
             // Record 0 describes the MFT itself. Read it from the position in the boot sector, or from the mirror copy.
@@ -77,6 +97,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>Reads the map of used clusters ($Bitmap).</summary>
         private void LoadBitmap()
         {
             var record = ReadRecord(6);
@@ -84,6 +105,7 @@ namespace Kudurescue.Core
             Bitmap = data?.Runs != null ? new ClusterBitmap(this, data.Runs, Boot.TotalClusters) : ClusterBitmap.Unknown(Boot.TotalClusters);
         }
 
+        /// <summary>Reads one record, or null when it can't be read or isn't a whole record.</summary>
         public FileRecord ReadRecord(long number)
         {
             var buffer = new byte[RecordSize];
@@ -175,6 +197,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>The run that holds a cluster of a file, or null.</summary>
         public static DataRun? FindRun(List<DataRun> runs, long vcn)
         {
             int lo = 0, hi = runs.Count - 1;
@@ -189,6 +212,7 @@ namespace Kudurescue.Core
             return null;
         }
 
+        /// <summary>Closes the drive when it's this one's own.</summary>
         public void Dispose()
         {
             if (_ownsDevice) Device.Dispose();
@@ -198,12 +222,18 @@ namespace Kudurescue.Core
     /// <summary>NTFS's map of which clusters are in use ($Bitmap). Read in 1 MB pieces as needed.</summary>
     public sealed class ClusterBitmap
     {
+        /// <summary>How much of the map is read at a time (1 MB).</summary>
         private const int PageBytes = 1 << 20;
+        /// <summary>The drive.</summary>
         private readonly NtfsVolume _volume;
+        /// <summary>Where the map is.</summary>
         private readonly List<DataRun> _runs;
+        /// <summary>Pages of the map read.</summary>
         private readonly Dictionary<long, byte[]> _pages = new Dictionary<long, byte[]>();
+        /// <summary>True when the map couldn't be read (then every cluster counts as used).</summary>
         private readonly bool _unknown;
 
+        /// <summary>The map read from these runs.</summary>
         public ClusterBitmap(NtfsVolume volume, List<DataRun> runs, long totalClusters)
         {
             _volume = volume;
@@ -211,6 +241,7 @@ namespace Kudurescue.Core
             TotalClusters = totalClusters;
         }
 
+        /// <summary>A map that couldn't be read.</summary>
         private ClusterBitmap(long totalClusters)
         {
             TotalClusters = totalClusters;
@@ -220,9 +251,12 @@ namespace Kudurescue.Core
         /// <summary>Used when the bitmap can't be read: every cluster counts as free, so chances may be too hopeful.</summary>
         public static ClusterBitmap Unknown(long totalClusters) => new ClusterBitmap(totalClusters);
 
+        /// <summary>How many clusters the drive has.</summary>
         public long TotalClusters { get; }
+        /// <summary>True when the map couldn't be read.</summary>
         public bool IsUnknown => _unknown;
 
+        /// <summary>True when a cluster is used now.</summary>
         public bool IsAllocated(long lcn)
         {
             if (_unknown) return false;
@@ -308,6 +342,7 @@ namespace Kudurescue.Core
             if (start >= 0) yield return (start, Math.Min(c, TotalClusters) - start);
         }
 
+        /// <summary>How many bits are set in a byte.</summary>
         private static int PopCount(byte b)
         {
             var n = 0;
@@ -315,6 +350,7 @@ namespace Kudurescue.Core
             return n;
         }
 
+        /// <summary>A page of the map.</summary>
         private byte[] Page(long index)
         {
             lock (_pages)

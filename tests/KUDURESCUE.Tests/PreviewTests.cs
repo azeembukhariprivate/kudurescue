@@ -1,3 +1,4 @@
+// The tests for previews: music and video details, and Office text, from made-up files.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,14 +12,22 @@ namespace Kudurescue.Tests
     /// <summary>What the preview reads: music details and the words in Office files, from made-up files.</summary>
     internal static class PreviewTests
     {
+        /// <summary>Text as bytes.</summary>
         private static byte[] A(string s) => Encoding.ASCII.GetBytes(s);
+        /// <summary>Text as UTF-8 bytes.</summary>
         private static byte[] U(string s) => Encoding.UTF8.GetBytes(s);
+        /// <summary>A 4-byte number, largest byte first.</summary>
         private static byte[] Be(uint v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+        /// <summary>A 4-byte number, smallest byte first.</summary>
         private static byte[] Le(uint v) => BitConverter.GetBytes(v);
+        /// <summary>Byte arrays joined.</summary>
         private static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
+        /// <summary>An MP4 box.</summary>
         private static byte[] Box(string type, params byte[][] body) { var b = Cat(body); return Cat(Be((uint)(b.Length + 8)), Encoding.Latin1.GetBytes(type), b); }
+        /// <summary>The details read from a file's bytes.</summary>
         private static MediaInfo Info(byte[] file, string ext) => MediaInfo.Read(new MemoryStream(file), ext);
 
+        /// <summary>Runs the preview tests.</summary>
         public static void Run(Action<bool, string> check)
         {
             // MP3: an ID3 tag with the name, singer and album, and a "Xing" header saying 1000 frames at 44.1 kHz (26.1 s).
@@ -100,6 +109,7 @@ namespace Kudurescue.Tests
             check(salvaged.Values.All(x => x.Data.Length <= Office.MaxPart + (1 << 16)), "each part kept under the limit");
         }
 
+        /// <summary>A zip file holding these parts.</summary>
         private static byte[] Zip(params (string Name, string Text)[] parts)
         {
             var output = new MemoryStream();

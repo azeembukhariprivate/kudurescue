@@ -1,3 +1,5 @@
+// Richer previews: a still from a video (Media Foundation, from memory) and a PDF's first page (Windows' PDF reader),
+// both from the found file read in place.
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -16,6 +18,7 @@ namespace Kudurescue.Views
     /// </summary>
     public static class RichPreview
     {
+        /// <summary>The endings of videos a still can be made from.</summary>
         public static readonly System.Collections.Generic.HashSet<string> VideoKinds = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { ".mp4", ".m4v", ".mov", ".3gp", ".3g2", ".avi", ".wmv", ".asf", ".mkv", ".webm", ".mts", ".m2ts", ".ts" };
 
@@ -170,6 +173,7 @@ namespace Kudurescue.Views
             }
         }
 
+        /// <summary>Media Foundation's constants and ids (as in Windows' own headers).</summary>
         private const int MfVersion = 0x00020070;
         private const int FirstVideoStream = unchecked((int)0xFFFFFFFC);
         private const int AllStreams = unchecked((int)0xFFFFFFFE);
@@ -259,11 +263,15 @@ namespace Kudurescue.Views
         /// <summary>A .NET stream handed to Windows as a COM stream (read only; Windows may read from another thread).</summary>
         private sealed class ComStream : IStream
         {
+            /// <summary>The found file.</summary>
             private readonly Stream _s;
+            /// <summary>One read at a time.</summary>
             private readonly object _lock = new object();
 
+            /// <summary>A read-only COM stream over a .NET stream (for Windows' readers).</summary>
             public ComStream(Stream s) => _s = s;
 
+            /// <summary>Reads bytes.</summary>
             public void Read(byte[] pv, int cb, IntPtr pcbRead)
             {
                 int n;
@@ -280,6 +288,7 @@ namespace Kudurescue.Views
                 if (pcbRead != IntPtr.Zero) Marshal.WriteInt32(pcbRead, n);
             }
 
+            /// <summary>Moves to a place.</summary>
             public void Seek(long dlibMove, int dwOrigin, IntPtr plibNewPosition)
             {
                 long pos;
@@ -287,18 +296,27 @@ namespace Kudurescue.Views
                 if (plibNewPosition != IntPtr.Zero) Marshal.WriteInt64(plibNewPosition, pos);
             }
 
+            /// <summary>The stream's size.</summary>
             public void Stat(out STATSTG pstatstg, int grfStatFlag)
             {
                 pstatstg = new STATSTG { type = 2, cbSize = _s.Length, grfMode = 0 };
             }
 
+            /// <summary>Can't be written.</summary>
             public void Write(byte[] pv, int cb, IntPtr pcbWritten) => throw new COMException("Read only", unchecked((int)0x80030005));
+            /// <summary>Can't be changed.</summary>
             public void SetSize(long libNewSize) => throw new COMException("Read only", unchecked((int)0x80030005));
+            /// <summary>Not done.</summary>
             public void CopyTo(IStream pstm, long cb, IntPtr pcbRead, IntPtr pcbWritten) => throw new NotSupportedException();
+            /// <summary>Nothing to commit.</summary>
             public void Commit(int grfCommitFlags) { }
+            /// <summary>Nothing to undo.</summary>
             public void Revert() { }
+            /// <summary>Can't be locked.</summary>
             public void LockRegion(long libOffset, long cb, int dwLockType) => throw new COMException("Not supported", unchecked((int)0x80030001));
+            /// <summary>Can't be locked.</summary>
             public void UnlockRegion(long libOffset, long cb, int dwLockType) => throw new COMException("Not supported", unchecked((int)0x80030001));
+            /// <summary>Can't be copied.</summary>
             public void Clone(out IStream ppstm) => throw new NotSupportedException();
         }
     }

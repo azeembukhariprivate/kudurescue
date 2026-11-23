@@ -1,3 +1,4 @@
+// Small but real files of each kind the deep scan finds, made for the tests.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,14 +11,19 @@ namespace Kudurescue.Tests
     /// <summary>Small but structurally valid files of each type Deep scan knows, built byte by byte.</summary>
     internal static class CarveSamples
     {
+        /// <summary>Text as bytes.</summary>
         private static byte[] A(string s) => Encoding.ASCII.GetBytes(s);
+        /// <summary>A 2-byte number, largest byte first.</summary>
         private static byte[] BE16(int v) => new[] { (byte)(v >> 8), (byte)v };
+        /// <summary>A 4-byte number, largest byte first.</summary>
         private static byte[] BE32(long v) => new[] { (byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v };
+        /// <summary>Byte arrays joined.</summary>
         private static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
 
         /// <summary>Random-looking data with no 0xFF bytes (so it can sit inside JPEG data or anywhere).</summary>
         public static byte[] Noise(int n, int seed) => NtfsImage.Pattern(n, seed).Select(b => b == 0xFF ? (byte)0x7E : b).ToArray();
 
+        /// <summary>A JPEG.</summary>
         public static byte[] Jpeg()
         {
             var thumbnail = Cat(new byte[] { 0xFF, 0xD8, 0xFF, 0xDB }, BE16(6), Noise(4, 1), new byte[] { 0xFF, 0xD9 });
@@ -28,6 +34,7 @@ namespace Kudurescue.Tests
             return Cat(new byte[] { 0xFF, 0xD8 }, app1, dqt, sos, data, new byte[] { 0xFF, 0xD9 });
         }
 
+        /// <summary>A PNG.</summary>
         public static byte[] Png()
         {
             byte[] Chunk(string type, byte[] data) => Cat(BE32(data.Length), A(type), data, new byte[4]);
@@ -35,12 +42,14 @@ namespace Kudurescue.Tests
                 Chunk("IHDR", new byte[13]), Chunk("IDAT", Noise(5000, 7)), Chunk("IEND", new byte[0]));
         }
 
+        /// <summary>A GIF.</summary>
         public static byte[] Gif()
         {
             var image = Cat(new byte[] { 0x2C, 0, 0, 0, 0, 4, 0, 4, 0, 0x00 }, new byte[] { 2 }, new byte[] { 200 }, Noise(200, 8), new byte[] { 50 }, Noise(50, 9), new byte[] { 0 });
             return Cat(A("GIF89a"), new byte[] { 4, 0, 4, 0, 0x80, 0, 0 }, new byte[6], new byte[] { 0x21, 0xF9, 4, 0, 0, 0, 0, 0 }, image, new byte[] { 0x3B });
         }
 
+        /// <summary>A BMP.</summary>
         public static byte[] Bmp()
         {
             var size = 54 + 3000;
@@ -53,9 +62,11 @@ namespace Kudurescue.Tests
             return b;
         }
 
+        /// <summary>A PDF.</summary>
         public static byte[] Pdf() =>
             A("%PDF-1.7\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n2 0 obj << /Updated true >> endobj\ntrailer << >>\n%%EOF\n");
 
+        /// <summary>A Word document.</summary>
         public static byte[] Docx()
         {
             using (var ms = new MemoryStream())
@@ -69,14 +80,17 @@ namespace Kudurescue.Tests
             }
         }
 
+        /// <summary>An MP4.</summary>
         public static byte[] Mp4() => Cat(BE32(20), A("ftypisom"), BE32(512), A("isom"), BE32(16), A("moov"), new byte[8], BE32(2008), A("mdat"), Noise(2000, 11));
 
+        /// <summary>A WAV.</summary>
         public static byte[] Wav()
         {
             var data = Noise(4000, 12);
             return Cat(A("RIFF"), BitConverter.GetBytes(4 + 8 + data.Length), A("WAVE"), A("data"), BitConverter.GetBytes(data.Length), data);
         }
 
+        /// <summary>An MP3.</summary>
         public static byte[] Mp3()
         {
             var id3 = Cat(A("ID3"), new byte[] { 3, 0, 0, 0, 0, 0, 20 }, new byte[20]);
@@ -90,6 +104,7 @@ namespace Kudurescue.Tests
             return Cat(id3, frames.ToArray());
         }
 
+        /// <summary>An Ogg file.</summary>
         public static byte[] Ogg()
         {
             byte[] Page(byte flags, byte[] body, int sequence)
@@ -106,6 +121,7 @@ namespace Kudurescue.Tests
             return Cat(Page(0x02, Cat(A("\x01vorbis"), Noise(23, 30)), 0), Page(0, Noise(600, 31), 1), Page(0x04, Noise(300, 32), 2));
         }
 
+        /// <summary>A 7z archive.</summary>
         public static byte[] SevenZip()
         {
             var b = new byte[32 + 1000 + 40];
@@ -116,6 +132,7 @@ namespace Kudurescue.Tests
             return b;
         }
 
+        /// <summary>An SQLite file.</summary>
         public static byte[] Sqlite()
         {
             var b = new byte[3 * 1024];
@@ -128,6 +145,7 @@ namespace Kudurescue.Tests
             return b;
         }
 
+        /// <summary>A program (.exe).</summary>
         public static byte[] Exe()
         {
             var b = new byte[0x600];
@@ -146,6 +164,7 @@ namespace Kudurescue.Tests
             return b;
         }
 
+        /// <summary>A font.</summary>
         public static byte[] Ttf()
         {
             var b = new byte[12 + 4 * 16 + 400];
@@ -162,6 +181,7 @@ namespace Kudurescue.Tests
             return b;
         }
 
+        /// <summary>A WebM video.</summary>
         public static byte[] Webm()
         {
             var docType = Cat(new byte[] { 0x42, 0x82, 0x84 }, A("webm"));
@@ -170,6 +190,7 @@ namespace Kudurescue.Tests
             return Cat(header, new byte[] { 0x18, 0x53, 0x80, 0x67, 0x40 | (3000 >> 8), (byte)(3000 & 0xFF) }, body);
         }
 
+        /// <summary>An old Word document (.doc).</summary>
         public static byte[] Doc()
         {
             var b = new byte[512 * 4];
@@ -190,6 +211,7 @@ namespace Kudurescue.Tests
             return b;
         }
 
+        /// <summary>A contact card (.vcf).</summary>
         public static byte[] Vcf() => A("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Azeem\r\nEND:VCARD\r\nBEGIN:VCARD\r\nVERSION:3.0\r\nFN:Claude\r\nEND:VCARD\r\n");
 
         /// <summary>A Photoshop file: its length isn't recorded, so it runs up to the next file.</summary>

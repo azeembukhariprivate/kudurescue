@@ -1,3 +1,4 @@
+// Saving a scan to a .kudurescue file and opening it again (a deep scan can go on from where it stopped).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,7 +17,9 @@ namespace Kudurescue.Core
     [DataContract]
     public sealed class SavedScan
     {
+        /// <summary>The ending of saved scans.</summary>
         public const string Extension = ".kudurescue";
+        /// <summary>The choice of file kind in the save and open windows.</summary>
         public const string FileFilter = "KUDURESCUE scans (*.kudurescue)|*.kudurescue";
 
         [DataMember] public int Version { get; set; } = 1;
@@ -34,8 +37,10 @@ namespace Kudurescue.Core
         [DataMember] public DateTime Saved { get; set; }
         [DataMember] public List<FoundFile> Files { get; set; } = new List<FoundFile>();
 
+        /// <summary>True when it was a deep scan that didn't finish.</summary>
         public bool CanResume => Kind == "Deep" && !Finished;
 
+        /// <summary>Writes the scan.</summary>
         public void Save(string path)
         {
             Saved = DateTime.UtcNow;
@@ -47,6 +52,7 @@ namespace Kudurescue.Core
             File.Move(temp, path);
         }
 
+        /// <summary>Reads a saved scan.</summary>
         public static SavedScan Load(string path)
         {
             try
@@ -66,6 +72,7 @@ namespace Kudurescue.Core
             }
         }
 
+        /// <summary>A JSON reader and writer for a saved scan.</summary>
         private static DataContractJsonSerializer Serializer() =>
             new DataContractJsonSerializer(typeof(SavedScan), new DataContractJsonSerializerSettings { DateTimeFormat = new DateTimeFormat("o") });
 
